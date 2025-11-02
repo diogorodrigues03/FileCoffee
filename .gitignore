@@ -1,0 +1,17 @@
+# Rust build artifacts
+/target
+**/target
+
+# Cargo files
+**/Cargo.lock
+
+# VS Code settings
+.vscode/
+**/.vscode/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
