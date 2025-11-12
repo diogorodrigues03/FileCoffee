@@ -1,4 +1,5 @@
-use crate::types::{ClientMessage, PeerSender, Room, Rooms, ServerMessage};
+use crate::types::{ClientMessage, PeerSender, Rooms, ServerMessage};
+use crate::room::Room;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -19,7 +20,7 @@ pub async fn handle_client_message(
             println!("Created new room: {}", room_id);
 
             // Add this peer to the room
-            let mut room_peers = room.peers.write().await;
+            let mut room_peers = room.peers().write().await;
             room_peers.push(peer_tx.clone());
             println!("Current peers: {}", room_peers.len());
             let peer_index = room_peers.len() - 1;
@@ -68,7 +69,7 @@ pub async fn handle_client_message(
             drop(rooms_map);
 
             // Add this peer to the room
-            let mut room_peers = room.peers.write().await;
+            let mut room_peers = room.peers().write().await;
             room_peers.push(peer_tx.clone());
             let peer_index = room_peers.len() - 1;
             drop(room_peers);
@@ -129,7 +130,7 @@ pub async fn cleanup_peer(current_room: Arc<RwLock<Option<(String, usize)>>>, ro
     if let Some((room_id, peer_index)) = current.as_ref() {
         let rooms_map = rooms.read().await;
         if let Some(room) = rooms_map.get(room_id) {
-            let mut peers = room.peers.write().await;
+            let mut peers = room.peers().write().await;
             if *peer_index < peers.len() {
                 peers.remove(*peer_index);
             }

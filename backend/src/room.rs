@@ -1,7 +1,13 @@
-use crate::types::Room;
+use crate::types::PeerSender;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use warp::filters::ws::Message;
+
+#[derive(Clone)]
+pub struct Room {
+    id: String,
+    peers: Arc<RwLock<Vec<PeerSender>>>,
+}
 
 impl Room {
     pub fn new(id: String) -> Self {
@@ -24,5 +30,9 @@ impl Room {
             // Ignore errors (peer might have disconnected)
             let _ = peer.send(message.clone());
         }
+    }
+
+    pub fn peers(&self) -> &Arc<RwLock<Vec<PeerSender>>> {
+        &self.peers
     }
 }

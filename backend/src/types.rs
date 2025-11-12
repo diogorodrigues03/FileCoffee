@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{RwLock, mpsc};
 use warp::ws::Message;
+use crate::room::Room;
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
@@ -28,8 +29,3 @@ pub type Rooms = Arc<RwLock<HashMap<String, Room>>>;
 // Type alias for a sender that can send WebSocket messages
 pub type PeerSender = mpsc::UnboundedSender<Message>;
 
-#[derive(Clone)]
-pub struct Room {
-    pub id: String,
-    pub peers: Arc<RwLock<Vec<PeerSender>>>,
-}
