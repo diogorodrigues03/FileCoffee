@@ -16,9 +16,6 @@ async fn main() {
     // Clone for the filter (warp requires 'static lifetime)
     let rooms_filter = warp::any().map(move || rooms.clone());
 
-    // Serve static files (HTML/JS frontend)
-    let static_files = warp::fs::dir("./static/");
-
     // WebSocket endpoint
     let ws_route =
         warp::path("ws")
@@ -28,10 +25,8 @@ async fn main() {
                 ws.on_upgrade(move |socket| handle_connection(socket, rooms))
             });
 
-    let routes = static_files.or(ws_route);
-
     println!("Server running on http://localhost:3030");
-    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+    warp::serve(ws_route).run(([127, 0, 0, 1], 3030)).await;
 }
 
 async fn handle_connection(ws: warp::ws::WebSocket, rooms: Rooms) {
