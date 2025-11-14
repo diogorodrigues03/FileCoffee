@@ -1,5 +1,5 @@
-use crate::types::{ClientMessage, PeerSender, Rooms, ServerMessage};
 use crate::room::Room;
+use crate::types::{ClientMessage, PeerSender, Rooms, ServerMessage};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -22,28 +22,18 @@ pub async fn handle_client_message(
             // Add this peer to the room
             let mut room_peers = room.peers().write().await;
             room_peers.push(peer_tx.clone());
-            println!("Current peers: {}", room_peers.len());
             let peer_index = room_peers.len() - 1;
-            println!("Peer index: {}", peer_index);
             drop(room_peers); // Release the lock
 
             // Store room in global rooms map
-            println!("Acquiring rooms write lock");
             let mut rooms_map = rooms.write().await;
-            println!("Acquired rooms write lock");
             rooms_map.insert(room_id.clone(), room);
-            println!("Inserted room");
             drop(rooms_map);
-            println!("Dropped rooms_map");
 
             // Update this peer's current room
-            println!("Acquiring current_room write lock");
             let mut current = current_room.write().await;
-            println!("Acquired current_room write lock");
             *current = Some((room_id.clone(), peer_index));
-            println!("Updated current_room");
             drop(current);
-            println!("Dropped current_room");
 
             // Send response to the peer
             let response = ServerMessage::RoomCreated { room_id };
