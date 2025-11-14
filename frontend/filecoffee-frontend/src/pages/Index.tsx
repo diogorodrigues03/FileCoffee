@@ -1,13 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { FileUpload } from "@/components/FileUpload";
 import { PasswordSetup } from "@/components/PasswordSetup";
 import { ShareLinks } from "@/components/ShareLinks";
+import { ViewType } from "@/constants/enums.ts";
 import coffeeLogoImg from "@/assets/coffee-logo.png";
 
-type View = "upload" | "password" | "share";
-
 const Index = () => {
-  const [currentView, setCurrentView] = useState<View>("upload");
+  const [currentView, setCurrentView] = useState<ViewType>(ViewType.UPLOAD);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [shareUrls, setShareUrls] = useState<{
     long: string;
@@ -17,7 +16,7 @@ const Index = () => {
 
   const handleFileSelect = (file: File) => {
     setSelectedFile(file);
-    setCurrentView("password");
+    setCurrentView(ViewType.PASSWORD);
   };
 
   const handleCancel = () => {
@@ -27,7 +26,7 @@ const Index = () => {
     }
 
     setSelectedFile(null);
-    setCurrentView("upload");
+    setCurrentView(ViewType.UPLOAD);
   };
 
   const handleStart = async (password?: string) => {
@@ -64,7 +63,7 @@ const Index = () => {
       short: mockShortUrl,
     });
 
-    setCurrentView("share");
+    setCurrentView(ViewType.SHARE);
   };
 
   return (
@@ -89,13 +88,13 @@ const Index = () => {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 flex justify-center mt-20">
+      <main className="flex-1 flex justify-center mt-8">
         <div className="w-full max-w-4xl">
-          {currentView === "upload" && (
+          {currentView === ViewType.UPLOAD && (
             <FileUpload onFileSelect={handleFileSelect} />
           )}
 
-          {currentView === "password" && selectedFile && (
+          {currentView === ViewType.PASSWORD && selectedFile && (
             <PasswordSetup
               fileName={selectedFile.name}
               onCancel={handleCancel}
@@ -103,7 +102,7 @@ const Index = () => {
             />
           )}
 
-          {currentView === "share" && shareUrls && (
+          {currentView === ViewType.SHARE && shareUrls && (
             <ShareLinks longUrl={shareUrls.long} shortUrl={shareUrls.short} />
           )}
         </div>
