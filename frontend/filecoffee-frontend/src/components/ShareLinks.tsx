@@ -14,10 +14,10 @@ export const ShareLinks = ({ longUrl, shortUrl }: ShareLinksProps) => {
   const [copiedLong, setCopiedLong] = useState(false);
   const [copiedShort, setCopiedShort] = useState(false);
 
-  const handleCopy = async (text: string, type: 'long' | 'short') => {
+  const handleCopy = async (text: string, type: "long" | "short") => {
     try {
       await navigator.clipboard.writeText(text);
-      if (type === 'long') {
+      if (type === "long") {
         setCopiedLong(true);
         setTimeout(() => setCopiedLong(false), 2000);
       } else {
@@ -46,7 +46,10 @@ export const ShareLinks = ({ longUrl, shortUrl }: ShareLinksProps) => {
 
       <div className="bg-card p-8 rounded-2xl shadow-medium border border-border w-full space-y-6">
         <div className="space-y-2">
-          <Label htmlFor="long-url" className="flex items-center gap-2 text-foreground">
+          <Label
+            htmlFor="long-url"
+            className="flex items-center gap-2 text-foreground"
+          >
             <Link2 className="h-4 w-4" />
             Full URL
           </Label>
@@ -60,7 +63,7 @@ export const ShareLinks = ({ longUrl, shortUrl }: ShareLinksProps) => {
             <Button
               variant="outline"
               size="icon"
-              onClick={() => handleCopy(longUrl, 'long')}
+              onClick={() => handleCopy(longUrl, "long")}
               className="shrink-0 border-border hover:bg-secondary transition-smooth"
             >
               {copiedLong ? (
@@ -73,7 +76,10 @@ export const ShareLinks = ({ longUrl, shortUrl }: ShareLinksProps) => {
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="short-url" className="flex items-center gap-2 text-foreground">
+          <Label
+            htmlFor="short-url"
+            className="flex items-center gap-2 text-foreground"
+          >
             <Link className="h-4 w-4" />
             Short URL
           </Label>
@@ -87,7 +93,7 @@ export const ShareLinks = ({ longUrl, shortUrl }: ShareLinksProps) => {
             <Button
               variant="outline"
               size="icon"
-              onClick={() => handleCopy(shortUrl, 'short')}
+              onClick={() => handleCopy(shortUrl, "short")}
               className="shrink-0 border-border hover:bg-secondary transition-smooth"
             >
               {copiedShort ? (

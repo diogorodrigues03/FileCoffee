@@ -9,6 +9,10 @@
 .vscode/
 **/.vscode/
 
+# JetBrains IDE settings
+.idea/
+**/.idea/
+
 # OS-specific files
 .DS_Store
 Thumbs.db

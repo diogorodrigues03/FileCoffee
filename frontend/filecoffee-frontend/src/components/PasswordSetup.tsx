@@ -10,7 +10,11 @@ interface PasswordSetupProps {
   onStart: (password?: string) => void;
 }
 
-export const PasswordSetup = ({ fileName, onCancel, onStart }: PasswordSetupProps) => {
+export const PasswordSetup = ({
+  fileName,
+  onCancel,
+  onStart,
+}: PasswordSetupProps) => {
   const [password, setPassword] = useState("");
 
   const handleStart = () => {
@@ -25,8 +29,12 @@ export const PasswordSetup = ({ fileName, onCancel, onStart }: PasswordSetupProp
             <Lock className="h-6 w-6 text-accent" />
           </div>
           <div>
-            <h2 className="text-xl font-semibold text-foreground">Optional Security</h2>
-            <p className="text-sm text-muted-foreground">Protect your transfer with a password</p>
+            <h2 className="text-xl font-semibold text-foreground">
+              Optional Security
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Protect your transfer with a password
+            </p>
           </div>
         </div>
 
