@@ -22,3 +22,6 @@ Thumbs.db
 
 # Ignore copilot-instructions files
 **/copilot-instructions.md
+
+# Ignore .idea files and folders
+**/.idea/

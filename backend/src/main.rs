@@ -76,7 +76,7 @@ async fn handle_connection(ws: warp::ws::WebSocket, rooms: Rooms) {
                 Ok(m) => {
                     println!("Received message: {:?}", m);
                     m
-                },
+                }
                 Err(e) => {
                     eprintln!("Failed to parse message: {}", e);
                     let error = ServerMessage::Error {
