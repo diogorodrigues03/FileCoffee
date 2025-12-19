@@ -13,6 +13,8 @@ const Index = () => {
     short: string;
   } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const dataChannelRef = useRef<RTCDataChannel | null>(null);
 
   const handleFileSelect = (file: File) => {
     setSelectedFile(file);
@@ -44,7 +46,7 @@ const Index = () => {
       ws.send(JSON.stringify(msg));
     };
 
-    ws.onmessage = (event) => {
+    ws.onmessage = async (event) => {
       try {
         const message: ServerMessage = JSON.parse(event.data);
         console.log("WebSocket message received:", message);
@@ -63,6 +65,62 @@ const Index = () => {
               short: shortUrl,
             });
             setCurrentView(ViewType.SHARE);
+            break;
+          }
+          case ServerMessageType.PeerJoined: {
+            console.log("Peer joined! Starting WebRTC connection...");
+
+            // First create the RTCPeerConnection
+            const peerConnection = new RTCPeerConnection({
+              iceServers: [{ urls: "stun:stun.l.google.com:19302" }] // Google STUN Servers
+            });
+            peerConnectionRef.current = peerConnection;
+
+            // Create the Data Channel
+            const dataChannel = peerConnection.createDataChannel("fileTransfer");
+            dataChannelRef.current = dataChannel;
+
+            dataChannel.onopen = () => { console.log("Data channel opened"); };
+            dataChannel.onclose = () => { console.log("Data channel closed"); };
+
+            peerConnection.onicecandidate = (event) => {
+              if(event.candidate && wsRef.current){
+                wsRef.current.send(JSON.stringify({
+                  type: ClientMessageType.Signal,
+                  data: { type: "candidate", candidate: event.candidate }
+                }));
+              }
+            };
+
+            try{
+              const offer = await peerConnection.createOffer();
+              await peerConnection.setLocalDescription(offer);
+
+              if(wsRef.current){
+                wsRef.current.send(JSON.stringify({
+                  type: ClientMessageType.Signal,
+                  data: offer
+                }));
+              }
+            }catch(error){
+              console.error("Failed to create offer:", error);
+            }
+
+            break;
+          }
+          case ServerMessageType.Signal: {
+            if(!peerConnectionRef.current)
+              return;
+
+            const signal = message.data as any;
+
+            // Handle Answer from Receiver
+            if(signal.type === "answer"){
+              await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(signal));
+            }else if(signal.type === "candidate"){
+              await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            }
+            
             break;
           }
           case ServerMessageType.Error:
