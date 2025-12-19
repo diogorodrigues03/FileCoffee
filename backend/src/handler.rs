@@ -13,10 +13,10 @@ pub async fn handle_client_message(
 ) {
     // Handle different message types
     match msg {
-        ClientMessage::CreateRoom => {
+        ClientMessage::CreateRoom { password } => {
             println!("Handling CreateRoom request");
             let room_id = Uuid::new_v4().to_string();
-            let room = Room::new(room_id.clone());
+            let room = Room::new(room_id.clone(), password);
             println!("Created new room: {}", room_id);
 
             // Add this peer to the room
@@ -42,7 +42,7 @@ pub async fn handle_client_message(
                 peer_tx.send(Message::text(serde_json::to_string(&response).unwrap()));
             println!("Send result: {:?}", send_result);
         }
-        ClientMessage::JoinRoom { room_id } => {
+        ClientMessage::JoinRoom { room_id, password } => {
             println!("Handling JoinRoom request for room_id: {}", room_id);
             // Check if room exists
             let rooms_map = rooms.read().await;
@@ -57,6 +57,15 @@ pub async fn handle_client_message(
                 }
             };
             drop(rooms_map);
+
+            // Check password
+            if room.password.is_some() && room.password != password {
+                let error = ServerMessage::Error {
+                    message: "Invalid password".to_string(),
+                };
+                let _ = peer_tx.send(Message::text(serde_json::to_string(&error).unwrap()));
+                return;
+            }
 
             // Add this peer to the room
             let mut room_peers = room.peers().write().await;

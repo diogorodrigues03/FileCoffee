@@ -7,8 +7,8 @@ use crate::room::Room;
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 pub enum ClientMessage {
-    CreateRoom,
-    JoinRoom { room_id: String },
+    CreateRoom { password: Option<String> },
+    JoinRoom { room_id: String, password: Option<String> },
     Signal { data: serde_json::Value }, // WebRTC signaling data
 }
 

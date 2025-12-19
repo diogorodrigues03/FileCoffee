@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { FileUpload } from "@/components/FileUpload";
 import { PasswordSetup } from "@/components/PasswordSetup";
 import { ShareLinks } from "@/components/ShareLinks";
-import { ViewType } from "@/constants/enums.ts";
+import { ViewType, ClientMessage, ServerMessage, ClientMessageType, ServerMessageType } from "@/constants/enums.ts";
 import coffeeLogoImg from "@/assets/coffee-logo.png";
 
 const Index = () => {
@@ -30,20 +30,50 @@ const Index = () => {
   };
 
   const handleStart = async (password?: string) => {
-    // Here you would create the WebSocket connection
-    // For now, we'll simulate it with mock URLs
+    // Create WebSocket connection
     const ws = new WebSocket("ws://localhost:3030/ws");
     wsRef.current = ws;
 
     ws.onopen = () => {
-      // In this case we want to create the room
-      ws.send(JSON.stringify({ type: "CreateRoom" }));
+      console.log("Connected to WebSocket");
+      // Send CreateRoom message
+      const msg: ClientMessage = { 
+        type: ClientMessageType.CreateRoom,
+        password: password,
+      };
+      ws.send(JSON.stringify(msg));
     };
 
     ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      console.log("WebSocket message received:", message);
-      // Handle incoming messages as needed
+      try {
+        const message: ServerMessage = JSON.parse(event.data);
+        console.log("WebSocket message received:", message);
+
+        switch (message.type) {
+          case ServerMessageType.RoomCreated: {
+            const { room_id } = message;
+            // Generate share URLs with the real room ID for now? Implement random URLs later?
+            // Assuming the frontend is served on port 5173 (Vite default) or similar
+            const baseUrl = window.location.origin;
+            const longUrl = `${baseUrl}/download/${room_id}`;
+            const shortUrl = `${baseUrl}/d/${room_id.substring(0, 6)}`; // Example short URL
+
+            setShareUrls({
+              long: longUrl,
+              short: shortUrl,
+            });
+            setCurrentView(ViewType.SHARE);
+            break;
+          }
+          case ServerMessageType.Error:
+            console.error("Server error:", message.message);
+            break;
+          default:
+            break;
+        }
+      } catch (e) {
+        console.error("Failed to parse message:", e);
+      }
     };
 
     ws.onerror = (error) => {
@@ -51,19 +81,9 @@ const Index = () => {
     };
 
     ws.onclose = () => {
+      console.log("WebSocket connection closed");
       wsRef.current = null;
     };
-
-    // Mock URLs - replace with actual WebSocket URLs from your Rust backend
-    const mockLongUrl = `http://localhost:8080/download/${Math.random().toString(36).substring(2, 6)}`;
-    const mockShortUrl = `http://localhost:8080/download/${Math.random().toString(36).substring(2, 4)}`;
-
-    setShareUrls({
-      long: mockLongUrl,
-      short: mockShortUrl,
-    });
-
-    setCurrentView(ViewType.SHARE);
   };
 
   return (

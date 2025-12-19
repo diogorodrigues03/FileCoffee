@@ -1,23 +1,85 @@
 import EnterPassword from "@/components/EnterPassword";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import coffeeLogoImg from "@/assets/coffee-logo.png";
 import FileDownload from "@/components/FileDownload";
-import { ViewType } from "@/constants/enums.ts";
+import {
+  ViewType,
+  ClientMessage,
+  ClientMessageType,
+  ServerMessage,
+  ServerMessageType,
+} from "@/constants/enums.ts";
+import { useParams } from "react-router-dom";
 
 const Download = () => {
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.PASSWORD);
+  const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const { room_id } = useParams<{ room_id: string }>();
+
+  useEffect(() => {
+    // Cleanup on unmount
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
 
   function handlePasswordSubmit(password: string) {
-    if (password === "correct_password") {
-      setCurrentView(ViewType.DOWNLOAD);
-    } else {
-      console.log("Incorrect password");
-    }
-  }
+    if (!room_id) return;
 
-  function handleDownload() {
-    //TODO: implement download logic
+    // Close existing connection if any
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+
+    setError(null);
+
+    // Create WebSocket connection
+    const ws = new WebSocket("ws://localhost:3030/ws");
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      console.log("Connected to WebSocket");
+      const msg: ClientMessage = {
+        type: ClientMessageType.JoinRoom,
+        room_id,
+        password: password || undefined,
+      };
+      ws.send(JSON.stringify(msg));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message: ServerMessage = JSON.parse(event.data);
+        console.log("WebSocket message received:", message);
+
+        switch (message.type) {
+          case ServerMessageType.RoomJoined:
+            setCurrentView(ViewType.DOWNLOAD);
+            break;
+          case ServerMessageType.Error:
+            setError(message.message);
+            break;
+          default:
+            break;
+        }
+      } catch (e) {
+        console.error("Failed to parse message:", e);
+        setError("An unexpected error occurred.");
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error("WebSocket error:", error);
+      setError("Failed to connect to the server.");
+    };
+
+    ws.onclose = () => {
+      console.log("WebSocket connection closed");
+      wsRef.current = null;
+    };
   }
 
   return (
@@ -43,7 +105,12 @@ const Download = () => {
           {currentView === ViewType.DOWNLOAD && <FileDownload />}
 
           {currentView === ViewType.PASSWORD && (
-            <EnterPassword handlePasswordSubmit={handlePasswordSubmit} />
+            <>
+              <EnterPassword handlePasswordSubmit={handlePasswordSubmit} />
+              {error && (
+                <p className="text-red-500 text-center mt-4">{error}</p>
+              )}
+            </>
           )}
         </div>
       </main>

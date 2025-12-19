@@ -20,8 +20,9 @@ Thumbs.db
 # Logs
 *.log
 
-# Ignore copilot-instructions files
+# Ignore AI-instructions files
 **/copilot-instructions.md
+**/GEMINI.md
 
 # Ignore .idea files and folders
 **/.idea/
