@@ -117,7 +117,7 @@ export const FileUpload = ({ onFileSelect }: FileUploadProps) => {
           className="flex flex-col items-center gap-4 cursor-pointer"
         >
           <div className="p-6 rounded-full bg-gradient-coffee shadow-medium">
-            <Upload className="h-12 w-12 text-primary-foreground" />
+            <Upload className="h-6 w-6 text-primary-foreground" />
           </div>
           <div className="text-center">
             <p className="text-xl font-semibold text-foreground mb-2">

@@ -4,13 +4,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { Progress } from "@/components/ui/progress";
 
 interface ShareLinksProps {
   longUrl: string;
   shortUrl: string;
+  progress: number;
 }
 
-export const ShareLinks = ({ longUrl, shortUrl }: ShareLinksProps) => {
+export const ShareLinks = ({ longUrl, shortUrl, progress }: ShareLinksProps) => {
   const [copiedLong, setCopiedLong] = useState(false);
   const [copiedShort, setCopiedShort] = useState(false);
 
@@ -31,7 +33,7 @@ export const ShareLinks = ({ longUrl, shortUrl }: ShareLinksProps) => {
   };
 
   return (
-    <div className="flex flex-col items-center gap-8 mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500 w-full max-w-2xl">
+    <div className="flex flex-col items-center gap-8 mx-auto mt-20 animate-in fade-in slide-in-from-bottom-4 duration-500 w-full max-w-2xl">
       <div className="text-center">
         <div className="inline-flex items-center justify-center p-4 rounded-full bg-accent/10 mb-4">
           <Check className="h-8 w-8 text-accent" />
@@ -106,9 +108,24 @@ export const ShareLinks = ({ longUrl, shortUrl }: ShareLinksProps) => {
         </div>
 
         <div className="pt-4 border-t border-border">
-          <p className="text-sm text-muted-foreground text-center">
-            These links are active and ready to receive connections
-          </p>
+          {progress > 0 && progress < 100 && (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground text-center">
+                Peer is downloading... {progress.toFixed(0)}%
+              </p>
+              <Progress value={progress} />
+            </div>
+          )}
+          {progress === 100 && (
+            <p className="text-sm text-muted-foreground text-center text-accent">
+              Transfer Complete!
+            </p>
+          )}
+          {progress === 0 && (
+            <p className="text-sm text-muted-foreground text-center">
+              These links are active and ready to receive connections
+            </p>
+          )}
         </div>
       </div>
     </div>

@@ -12,9 +12,11 @@ const Index = () => {
     long: string;
     short: string;
   } | null>(null);
+  const [transferProgress, setTransferProgress] = useState<number>(0);
   const wsRef = useRef<WebSocket | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
+  const [progress, setProgress] = useState(0);
 
   const handleFileSelect = (file: File) => {
     setSelectedFile(file);
@@ -32,7 +34,7 @@ const Index = () => {
   };
 
   const handleStart = async (password?: string) => {
-    // Create WebSocket connection
+    // Create the WebSocket connection
     const ws = new WebSocket("ws://localhost:3030/ws");
     wsRef.current = ws;
 
@@ -70,7 +72,7 @@ const Index = () => {
           case ServerMessageType.PeerJoined: {
             console.log("Peer joined! Starting WebRTC connection...");
 
-            // First create the RTCPeerConnection
+            // First, create the RTCPeerConnection
             const peerConnection = new RTCPeerConnection({
               iceServers: [{ urls: "stun:stun.l.google.com:19302" }] // Google STUN Servers
             });
@@ -80,7 +82,61 @@ const Index = () => {
             const dataChannel = peerConnection.createDataChannel("fileTransfer");
             dataChannelRef.current = dataChannel;
 
-            dataChannel.onopen = () => { console.log("Data channel opened"); };
+            dataChannel.onopen = () => { 
+              console.log("Data channel opened");
+
+              if(!selectedFile) return;
+
+              // 1. Send metadata first
+              const metaData = JSON.stringify({
+                type: "metadata",
+                fileName: selectedFile.name,
+                fileSize: selectedFile.size,
+                fileType: selectedFile.type,
+              });
+
+              dataChannel.send(metaData);
+
+              // 2. Read and Chunk the file
+              const CHUNK_SIZE = 16 * 1024 // 16KB chunks
+              const fileReader = new FileReader();
+
+              fileReader.onload = (e) => {
+                const buffer = e.target?.result as ArrayBuffer;
+                let offset = 0;
+
+                const sendChunk = () => {
+                  while(offset < buffer.byteLength){
+                    // If the buffer is full, we'll wait a bit
+                    if(dataChannel.bufferedAmount > 10 * 1024 * 1024){
+                      setTimeout(sendChunk, 100);
+                      return;
+                    }
+
+                    const chunk = buffer.slice(offset, offset + CHUNK_SIZE);
+                    dataChannel.send(chunk);
+                    offset += CHUNK_SIZE;
+
+                    // Let's update the UI here later
+                  }
+                };
+
+                sendChunk();
+              };
+
+              fileReader.readAsArrayBuffer(selectedFile);
+            };
+            dataChannel.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === "progress" && typeof msg.percent === "number") {
+                        setTransferProgress(msg.percent);
+                        console.log(`Receiver progress: ${msg.percent}%`);
+                    }
+                } catch (e) {
+                    // Ignore binary data or other non-JSON messages
+                }
+            };
             dataChannel.onclose = () => { console.log("Data channel closed"); };
 
             peerConnection.onicecandidate = (event) => {
@@ -147,12 +203,13 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-gradient-cream flex flex-col">
       {/* Header */}
+      { currentView !== ViewType.SHARE && (
       <header className="pt-12 pb-8 px-4">
         <div className="max-w-4xl mx-auto flex flex-col items-center gap-4">
           <img
             src={coffeeLogoImg}
             alt="Coffee Transfer"
-            className="h-56 w-auto"
+            className="h-auto w-auto"
           />
           <div className="text-center">
             <h1 className="text-4xl font-bold bg-gradient-coffee bg-clip-text text-transparent mb-2">
@@ -164,10 +221,11 @@ const Index = () => {
           </div>
         </div>
       </header>
+      )}
 
       {/* Main Content */}
       <main className="flex-1 flex justify-center mt-8">
-        <div className="w-full max-w-4xl">
+        <div className="w-2/3 max-w-4xl">
           {currentView === ViewType.UPLOAD && (
             <FileUpload onFileSelect={handleFileSelect} />
           )}
@@ -181,7 +239,7 @@ const Index = () => {
           )}
 
           {currentView === ViewType.SHARE && shareUrls && (
-            <ShareLinks longUrl={shareUrls.long} shortUrl={shareUrls.short} />
+            <ShareLinks longUrl={shareUrls.long} shortUrl={shareUrls.short} progress={progress} />
           )}
         </div>
       </main>
