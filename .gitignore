@@ -9,9 +9,20 @@
 .vscode/
 **/.vscode/
 
+# JetBrains IDE settings
+.idea/
+**/.idea/
+
 # OS-specific files
 .DS_Store
 Thumbs.db
 
 # Logs
 *.log
+
+# Ignore AI-instructions files
+**/copilot-instructions.md
+**/GEMINI.md
+
+# Ignore .idea files and folders
+**/.idea/
