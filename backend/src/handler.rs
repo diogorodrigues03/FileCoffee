@@ -25,7 +25,7 @@ pub async fn handle_client_message(
             let peer_index = room_peers.len() - 1;
             drop(room_peers); // Release the lock
 
-            // Store room in global rooms map
+            // Store room in the global rooms map
             let mut rooms_map = rooms.write().await;
             rooms_map.insert(room_id.clone(), room);
             drop(rooms_map);
@@ -35,7 +35,7 @@ pub async fn handle_client_message(
             *current = Some((room_id.clone(), peer_index));
             drop(current);
 
-            // Send response to the peer
+            // Send the response to the peer
             let response = ServerMessage::RoomCreated { room_id };
             println!("Sending RoomCreated response: {:?}", response);
             let send_result =
@@ -44,7 +44,7 @@ pub async fn handle_client_message(
         }
         ClientMessage::JoinRoom { room_id, password } => {
             println!("Handling JoinRoom request for room_id: {}", room_id);
-            // Check if room exists
+            // Check if the room exists
             let rooms_map = rooms.read().await;
             let room = match rooms_map.get(&room_id) {
                 Some(r) => r.clone(),
@@ -133,7 +133,7 @@ pub async fn cleanup_peer(current_room: Arc<RwLock<Option<(String, usize)>>>, ro
             if *peer_index < peers.len() {
                 peers.remove(*peer_index);
             }
-            // If room is empty, we could remove it from the map
+            // If the room is empty, we could remove it from the map
             // (would need to upgrade to write lock on rooms_map)
         }
     }

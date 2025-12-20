@@ -59,7 +59,7 @@ async fn handle_connection(ws: warp::ws::WebSocket, rooms: Rooms) {
         }
     });
 
-    // Process each incoming messages
+    // Process each incoming message
     while let Some(result) = ws_rx.next().await {
         let msg = match result {
             Ok(msg) => msg,
