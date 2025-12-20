@@ -2,7 +2,15 @@ import { useRef, useState } from "react";
 import { FileUpload } from "@/components/FileUpload";
 import { PasswordSetup } from "@/components/PasswordSetup";
 import { ShareLinks } from "@/components/ShareLinks";
-import { ViewType, ClientMessage, ServerMessage, ClientMessageType, ServerMessageType } from "@/constants/enums.ts";
+import {
+  ViewType,
+  ClientMessage,
+  ServerMessage,
+  ClientMessageType,
+  ServerMessageType,
+  SignalLabelType,
+  DATA_CHANNEL_LABEL,
+} from "@/constants/enums.ts";
 import coffeeLogoImg from "@/assets/coffee-logo.png";
 
 const Index = () => {
@@ -16,7 +24,6 @@ const Index = () => {
   const wsRef = useRef<WebSocket | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
-  const [progress, setProgress] = useState(0);
 
   const handleFileSelect = (file: File) => {
     setSelectedFile(file);
@@ -41,7 +48,7 @@ const Index = () => {
     ws.onopen = () => {
       console.log("Connected to WebSocket");
       // Send CreateRoom message
-      const msg: ClientMessage = { 
+      const msg: ClientMessage = {
         type: ClientMessageType.CreateRoom,
         password: password,
       };
@@ -56,6 +63,8 @@ const Index = () => {
         switch (message.type) {
           case ServerMessageType.RoomCreated: {
             const { room_id } = message;
+
+            //TODO: Implement the urls properly
             // Generate share URLs with the real room ID for now? Implement random URLs later?
             // Assuming the frontend is served on port 5173 (Vite default) or similar
             const baseUrl = window.location.origin;
@@ -74,18 +83,19 @@ const Index = () => {
 
             // First, create the RTCPeerConnection
             const peerConnection = new RTCPeerConnection({
-              iceServers: [{ urls: "stun:stun.l.google.com:19302" }] // Google STUN Servers
+              iceServers: [{ urls: "stun:stun.l.google.com:19302" }], // Google STUN Servers
             });
             peerConnectionRef.current = peerConnection;
 
             // Create the Data Channel
-            const dataChannel = peerConnection.createDataChannel("fileTransfer");
+            const dataChannel =
+              peerConnection.createDataChannel(DATA_CHANNEL_LABEL);
             dataChannelRef.current = dataChannel;
 
-            dataChannel.onopen = () => { 
+            dataChannel.onopen = () => {
               console.log("Data channel opened");
 
-              if(!selectedFile) return;
+              if (!selectedFile) return;
 
               // 1. Send metadata first
               const metaData = JSON.stringify({
@@ -98,7 +108,7 @@ const Index = () => {
               dataChannel.send(metaData);
 
               // 2. Read and Chunk the file
-              const CHUNK_SIZE = 16 * 1024 // 16KB chunks
+              const CHUNK_SIZE = 16 * 1024; // 16KB chunks
               const fileReader = new FileReader();
 
               fileReader.onload = (e) => {
@@ -106,9 +116,9 @@ const Index = () => {
                 let offset = 0;
 
                 const sendChunk = () => {
-                  while(offset < buffer.byteLength){
+                  while (offset < buffer.byteLength) {
                     // If the buffer is full, we'll wait a bit
-                    if(dataChannel.bufferedAmount > 10 * 1024 * 1024){
+                    if (dataChannel.bufferedAmount > 10 * 1024 * 1024) {
                       setTimeout(sendChunk, 100);
                       return;
                     }
@@ -127,56 +137,71 @@ const Index = () => {
               fileReader.readAsArrayBuffer(selectedFile);
             };
             dataChannel.onmessage = (event) => {
-                try {
-                    const msg = JSON.parse(event.data);
-                    if (msg.type === "progress" && typeof msg.percent === "number") {
-                        setTransferProgress(msg.percent);
-                        console.log(`Receiver progress: ${msg.percent}%`);
-                    }
-                } catch (e) {
-                    // Ignore binary data or other non-JSON messages
+              try {
+                const msg = JSON.parse(event.data);
+                if (
+                  msg.type === SignalLabelType.Progress &&
+                  typeof msg.percent === "number"
+                ) {
+                  setTransferProgress(msg.percent);
+                  console.log(`Receiver progress: ${msg.percent}%`);
                 }
+              } catch (e) {
+                // Ignore binary data or other non-JSON messages
+              }
             };
-            dataChannel.onclose = () => { console.log("Data channel closed"); };
+            dataChannel.onclose = () => {
+              console.log("Data channel closed");
+            };
 
             peerConnection.onicecandidate = (event) => {
-              if(event.candidate && wsRef.current){
-                wsRef.current.send(JSON.stringify({
-                  type: ClientMessageType.Signal,
-                  data: { type: "candidate", candidate: event.candidate }
-                }));
+              if (event.candidate && wsRef.current) {
+                wsRef.current.send(
+                  JSON.stringify({
+                    type: ClientMessageType.Signal,
+                    data: {
+                      type: SignalLabelType.Candidate,
+                      candidate: event.candidate,
+                    },
+                  }),
+                );
               }
             };
 
-            try{
+            try {
               const offer = await peerConnection.createOffer();
               await peerConnection.setLocalDescription(offer);
 
-              if(wsRef.current){
-                wsRef.current.send(JSON.stringify({
-                  type: ClientMessageType.Signal,
-                  data: offer
-                }));
+              if (wsRef.current) {
+                wsRef.current.send(
+                  JSON.stringify({
+                    type: ClientMessageType.Signal,
+                    data: offer,
+                  }),
+                );
               }
-            }catch(error){
+            } catch (error) {
               console.error("Failed to create offer:", error);
             }
 
             break;
           }
           case ServerMessageType.Signal: {
-            if(!peerConnectionRef.current)
-              return;
+            if (!peerConnectionRef.current) return;
 
             const signal = message.data as any;
 
             // Handle Answer from Receiver
-            if(signal.type === "answer"){
-              await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(signal));
-            }else if(signal.type === "candidate"){
-              await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            if (signal.type === SignalLabelType.Answer) {
+              await peerConnectionRef.current.setRemoteDescription(
+                new RTCSessionDescription(signal),
+              );
+            } else if (signal.type === SignalLabelType.Candidate) {
+              await peerConnectionRef.current.addIceCandidate(
+                new RTCIceCandidate(signal.candidate),
+              );
             }
-            
+
             break;
           }
           case ServerMessageType.Error:
@@ -203,24 +228,24 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-gradient-cream flex flex-col">
       {/* Header */}
-      { currentView !== ViewType.SHARE && (
-      <header className="pt-12 pb-8 px-4">
-        <div className="max-w-4xl mx-auto flex flex-col items-center gap-4">
-          <img
-            src={coffeeLogoImg}
-            alt="Coffee Transfer"
-            className="h-auto w-auto"
-          />
-          <div className="text-center">
-            <h1 className="text-4xl font-bold bg-gradient-coffee bg-clip-text text-transparent mb-2">
-              Coffee Transfer
-            </h1>
-            <p className="text-muted-foreground">
-              Share files securely, smooth as your morning brew
-            </p>
+      {currentView !== ViewType.SHARE && (
+        <header className="pt-12 pb-8 px-4">
+          <div className="max-w-4xl mx-auto flex flex-col items-center gap-4">
+            <img
+              src={coffeeLogoImg}
+              alt="Coffee Transfer"
+              className="h-auto w-auto"
+            />
+            <div className="text-center">
+              <h1 className="text-4xl font-bold bg-gradient-coffee bg-clip-text text-transparent mb-2">
+                Coffee Transfer
+              </h1>
+              <p className="text-muted-foreground">
+                Share files securely, smooth as your morning brew
+              </p>
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
       )}
 
       {/* Main Content */}
@@ -239,7 +264,11 @@ const Index = () => {
           )}
 
           {currentView === ViewType.SHARE && shareUrls && (
-            <ShareLinks longUrl={shareUrls.long} shortUrl={shareUrls.short} progress={progress} />
+            <ShareLinks
+              longUrl={shareUrls.long}
+              shortUrl={shareUrls.short}
+              progress={transferProgress}
+            />
           )}
         </div>
       </main>

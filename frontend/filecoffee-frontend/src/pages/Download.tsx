@@ -8,6 +8,7 @@ import {
   ClientMessageType,
   ServerMessage,
   ServerMessageType,
+  SignalLabelType,
 } from "@/constants/enums.ts";
 import { useParams } from "react-router-dom";
 
@@ -17,7 +18,7 @@ const Download = () => {
   const wsRef = useRef<WebSocket | null>(null);
   const { room_id } = useParams<{ room_id: string }>();
   const lastReportedProgress = useRef(0);
-  
+
   // File Transfer State
   const [progress, setProgress] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -26,7 +27,11 @@ const Download = () => {
   // Refs for high-frequency data handling
   const receivedChunksRef = useRef<ArrayBuffer[]>([]);
   const receivedBytesRef = useRef<number>(0);
-  const fileMetadataRef = useRef<{name: string, size: number, type: string} | null>(null);
+  const fileMetadataRef = useRef<{
+    name: string;
+    size: number;
+    type: string;
+  } | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
 
   useEffect(() => {
@@ -74,11 +79,11 @@ const Download = () => {
           case ServerMessageType.Signal: {
             const signal = message.data as any;
 
-            if(signal.type === "offer"){
+            if (signal.type === SignalLabelType.Offer) {
               console.log("Received WebRTC Offer. Creating answer...");
 
               const peerConnection = new RTCPeerConnection({
-                iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+                iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
               });
               peerConnectionRef.current = peerConnection;
 
@@ -86,87 +91,118 @@ const Download = () => {
               peerConnection.ondatachannel = (event) => {
                 const dc = event.channel;
                 console.log("Data Channel Received:", dc.label);
-                
+
                 dc.onopen = () => console.log("Data Channel OPEN!");
-                
+
                 dc.onmessage = (e) => {
-                    const data = e.data;
+                  const data = e.data;
 
-                    // 1. Handle Metadata (String)
-                    if (typeof data === "string") {
-                        try {
-                            const metadata = JSON.parse(data);
-                            if (metadata.type === "metadata") {
-                                fileMetadataRef.current = {
-                                    name: metadata.fileName,
-                                    size: metadata.fileSize,
-                                    type: metadata.fileType
-                                };
-                                receivedChunksRef.current = [];
-                                receivedBytesRef.current = 0;
-                                setProgress(0); // Reset progress
-                                setDownloadUrl(null); // Reset download URL
-                                setFileName(metadata.fileName); // Set file name
-                            }
-                        } catch (err) {
-                            console.error("Error parsing metadata:", err);
-                        }
-                    } 
-                    // 2. Handle Binary Chunk
-                    else if (data instanceof ArrayBuffer) {
-                        receivedChunksRef.current.push(data);
-                        receivedBytesRef.current += data.byteLength;
-                        
-                        // Update Progress UI (throttling could be added here if needed)
-                        if (fileMetadataRef.current && fileMetadataRef.current.size > 0) {
-                             const percent = (receivedBytesRef.current / fileMetadataRef.current.size) * 100;
-                             setProgress(Math.round(percent));
-                        }
-
-                        const percent = Math.round((receivedBytesRef.current / fileMetadataRef.current.size) * 100);
-
-                        if(percent > lastReportedProgress.current){
-                            dc.send(JSON.stringify({
-                                type: "progress",
-                                percent: percent
-                            }));
-                        }
-
-                        lastReportedProgress.current = percent;
-
-                        // Check if finished
-                        if (fileMetadataRef.current && receivedBytesRef.current >= fileMetadataRef.current.size) {
-                            console.log("File transfer complete. Reassembling...");
-                            const blob = new Blob(receivedChunksRef.current, { type: fileMetadataRef.current.type });
-                            const url = URL.createObjectURL(blob);
-                            setDownloadUrl(url);
-                            setFileName(fileMetadataRef.current.name);
-                        }
+                  // 1. Handle Metadata (String)
+                  if (typeof data === "string") {
+                    try {
+                      const metadata = JSON.parse(data);
+                      if (metadata.type === "metadata") {
+                        fileMetadataRef.current = {
+                          name: metadata.fileName,
+                          size: metadata.fileSize,
+                          type: metadata.fileType,
+                        };
+                        receivedChunksRef.current = [];
+                        receivedBytesRef.current = 0;
+                        setProgress(0); // Reset progress
+                        setDownloadUrl(null); // Reset download URL
+                        setFileName(metadata.fileName); // Set the file name
+                      }
+                    } catch (err) {
+                      console.error("Error parsing metadata:", err);
                     }
+                  }
+                  // 2. Handle Binary Chunk
+                  else if (data instanceof ArrayBuffer) {
+                    receivedChunksRef.current.push(data);
+                    receivedBytesRef.current += data.byteLength;
+
+                    // Update Progress UI (throttling could be added here if needed)
+                    if (
+                      fileMetadataRef.current &&
+                      fileMetadataRef.current.size > 0
+                    ) {
+                      const percent =
+                        (receivedBytesRef.current /
+                          fileMetadataRef.current.size) *
+                        100;
+                      setProgress(Math.round(percent));
+                    }
+
+                    const percent = Math.round(
+                      (receivedBytesRef.current /
+                        fileMetadataRef.current.size) *
+                        100,
+                    );
+
+                    if (percent > lastReportedProgress.current) {
+                      dc.send(
+                        JSON.stringify({
+                          type: SignalLabelType.Progress,
+                          percent: percent,
+                        }),
+                      );
+                    }
+
+                    lastReportedProgress.current = percent;
+
+                    // Check if finished
+                    if (
+                      fileMetadataRef.current &&
+                      receivedBytesRef.current >= fileMetadataRef.current.size
+                    ) {
+                      console.log("File transfer complete. Reassembling...");
+                      const blob = new Blob(receivedChunksRef.current, {
+                        type: fileMetadataRef.current.type,
+                      });
+                      const url = URL.createObjectURL(blob);
+                      setDownloadUrl(url);
+                      setFileName(fileMetadataRef.current.name);
+                    }
+                  }
                 };
               };
 
               peerConnection.onicecandidate = (event) => {
-                if(event.candidate && wsRef.current){
-                  wsRef.current.send(JSON.stringify({
-                    type: ClientMessageType.Signal,
-                    data: { type: "candidate", candidate: event.candidate }
-                  }));
+                if (event.candidate && wsRef.current) {
+                  wsRef.current.send(
+                    JSON.stringify({
+                      type: ClientMessageType.Signal,
+                      data: {
+                        type: SignalLabelType.Candidate,
+                        candidate: event.candidate,
+                      },
+                    }),
+                  );
                 }
               };
 
-              await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+              await peerConnection.setRemoteDescription(
+                new RTCSessionDescription(signal),
+              );
               const answer = await peerConnection.createAnswer();
               await peerConnection.setLocalDescription(answer);
 
-              if(wsRef.current){
-                wsRef.current.send(JSON.stringify({
-                  type: ClientMessageType.Signal,
-                  data: answer
-                }));
+              if (wsRef.current) {
+                wsRef.current.send(
+                  JSON.stringify({
+                    type: ClientMessageType.Signal,
+                    data: answer,
+                  }),
+                );
               }
-            }else if(signal.type === "candidate" && peerConnectionRef.current){
-              await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            } else if (
+              signal.type === SignalLabelType.Candidate &&
+              peerConnectionRef.current
+            ) {
+              await peerConnectionRef.current.addIceCandidate(
+                new RTCIceCandidate(signal.candidate),
+              );
             }
             break;
           }
@@ -198,7 +234,11 @@ const Download = () => {
       {/* Header */}
       <header className="pt-12 pb-8 px-4">
         <div className="max-w-4xl mx-auto flex flex-col items-center gap-4">
-          <img src={coffeeLogoImg} alt="Coffee Transfer" className="h-auto w-auto" />
+          <img
+            src={coffeeLogoImg}
+            alt="Coffee Transfer"
+            className="h-auto w-auto"
+          />
           <div className="text-center">
             <h1 className="text-4xl font-bold bg-gradient-coffee bg-clip-text text-transparent mb-2">
               Coffee Transfer
@@ -214,11 +254,11 @@ const Download = () => {
       <main className="flex-1 flex flex-col items-center mt-8">
         <div className="w-full max-w-4xl mx-auto">
           {currentView === ViewType.DOWNLOAD && (
-             <FileDownload 
-                progress={progress} 
-                fileName={fileName} 
-                downloadUrl={downloadUrl} 
-             />
+            <FileDownload
+              progress={progress}
+              fileName={fileName}
+              downloadUrl={downloadUrl}
+            />
           )}
 
           {currentView === ViewType.PASSWORD && (
