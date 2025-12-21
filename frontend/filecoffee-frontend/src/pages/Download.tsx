@@ -11,20 +11,29 @@ import {
   SignalLabelType,
 } from "@/constants/enums.ts";
 import { useParams } from "react-router-dom";
+import { useRoomValidation } from "@/hooks/useRoomValidation.ts";
 
 const Download = () => {
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.PASSWORD);
   const [error, setError] = useState<string | null>(null);
+
+  // Room handling
+  const { action, room_id } = useParams<{ action: string; room_id: string }>();
+  const {
+    isValidating,
+    roomExists,
+    error: validationError,
+  } = useRoomValidation(action, room_id);
+
+  // WebSocket Refs
   const wsRef = useRef<WebSocket | null>(null);
-  const { room_id } = useParams<{ room_id: string }>();
-  const lastReportedProgress = useRef(0);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
 
   // File Transfer State
   const [progress, setProgress] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>("");
-
-  // Refs for high-frequency data handling
+  const lastReportedProgress = useRef(0);
   const receivedChunksRef = useRef<ArrayBuffer[]>([]);
   const receivedBytesRef = useRef<number>(0);
   const fileMetadataRef = useRef<{
@@ -32,7 +41,6 @@ const Download = () => {
     size: number;
     type: string;
   } | null>(null);
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
 
   useEffect(() => {
     // Cleanup unmount
@@ -227,6 +235,28 @@ const Download = () => {
       console.log("WebSocket connection closed");
       wsRef.current = null;
     };
+  }
+
+  // Early return for Loading/Error states
+  if (isValidating) {
+    return (
+      <div className="min-h-screen b-gradient-cream flex items-center justify-center">
+        <p className="text-muted-foreground animate-pulse">
+          Checking brew status...
+        </p>
+      </div>
+    );
+  }
+
+  if (!roomExists) {
+    return (
+      <div className="min-h-screen bg-gradient-cream flex flex-col items-center justify-center gap-4">
+        <h2 className="text-2xl font-bold text-red-500">
+          404 - Brew Not Found!
+        </h2>
+        <p className="text-muted-foreground">{validationError}</p>
+      </div>
+    );
   }
 
   return (
