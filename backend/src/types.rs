@@ -20,6 +20,7 @@ pub enum ServerMessage {
     PeerJoined,
     Signal { data: serde_json::Value },
     Error { message: String },
+    RoomExists { exists: bool, has_password: bool },
 }
 
 //This will store all active rooms
@@ -28,4 +29,3 @@ pub enum ServerMessage {
 pub type Rooms = Arc<RwLock<HashMap<String, Room>>>;
 // Type alias for a sender that can send WebSocket messages
 pub type PeerSender = mpsc::UnboundedSender<Message>;
-

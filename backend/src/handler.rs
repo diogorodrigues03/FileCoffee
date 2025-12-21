@@ -138,3 +138,20 @@ pub async fn cleanup_peer(current_room: Arc<RwLock<Option<(String, usize)>>>, ro
         }
     }
 }
+
+pub async fn check_room_handler(room_id: String, rooms: Rooms) -> Result<impl warp::Reply, warp::Rejection> {
+    let rooms_map = rooms.read().await;
+
+    if(rooms_map.contains_key(&room_id)){
+        // The Room exists, check if it has a password
+        let has_password = rooms_map.get(&room_id).unwrap().password.is_some();
+
+        let message = ServerMessage::RoomExists { exists: true, has_password };
+
+        // Return a 200 OK with the result
+        Ok(warp::reply::json(&serde_json::json!(message)))
+    }else{
+        // The Room does not exist, return a 404 Not Found
+        Err(warp::reject::not_found())
+    }
+}

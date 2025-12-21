@@ -7,14 +7,24 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 use types::{ClientMessage, Rooms, ServerMessage};
 use warp::{Filter, ws::Message};
+use crate::handler::check_room_handler;
 
 #[tokio::main]
 async fn main() {
     // Initialize the shared rooms storage
     let rooms: Rooms = Arc::new(RwLock::new(HashMap::new()));
-
-    // Clone for the filter (warp requires 'static lifetime)
     let rooms_filter = warp::any().map(move || rooms.clone());
+
+    // Setup CORS
+    let cors = warp::cors()
+        .allow_any_origin()
+        .allow_methods(vec!["GET"]);
+
+    // Check room route GET /api/rooms/:room_id
+    let check_rooms_route = warp::path!("api" / "rooms" / String)
+        .and(warp::get())
+        .and(rooms_filter.clone())
+        .and_then(check_room_handler);
 
     // WebSocket endpoint
     let ws_route =
@@ -25,8 +35,15 @@ async fn main() {
                 ws.on_upgrade(move |socket| handle_connection(socket, rooms))
             });
 
+    // -- COMBINE ROUTES --
+    // The order matters, checked from top to bottom
+    // Attach CORS at the end to apply to all routes
+    let routes = check_rooms_route
+        .or(ws_route)
+        .with(cors);
+
     println!("Server running on http://localhost:3030");
-    warp::serve(ws_route).run(([127, 0, 0, 1], 3030)).await;
+    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 }
 
 async fn handle_connection(ws: warp::ws::WebSocket, rooms: Rooms) {
