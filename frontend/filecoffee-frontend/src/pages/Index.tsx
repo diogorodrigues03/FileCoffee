@@ -16,10 +16,7 @@ import coffeeLogoImg from "@/assets/coffee-logo.png";
 const Index = () => {
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.UPLOAD);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [shareUrls, setShareUrls] = useState<{
-    long: string;
-    short: string;
-  } | null>(null);
+  const [shareUrls, setShareUrls] = useState<{ long: string } | null>(null);
   const [transferProgress, setTransferProgress] = useState<number>(0);
   const wsRef = useRef<WebSocket | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
@@ -66,14 +63,11 @@ const Index = () => {
 
             //TODO: Implement the urls properly
             // Generate share URLs with the real room ID for now? Implement random URLs later?
-            // Assuming the frontend is served on port 5173 (Vite default) or similar
             const baseUrl = window.location.origin;
             const longUrl = `${baseUrl}/download/${room_id}`;
-            const shortUrl = `${baseUrl}/d/${room_id.substring(0, 6)}`; // Example short URL
 
             setShareUrls({
               long: longUrl,
-              short: shortUrl,
             });
             setCurrentView(ViewType.SHARE);
             break;
@@ -264,11 +258,7 @@ const Index = () => {
           )}
 
           {currentView === ViewType.SHARE && shareUrls && (
-            <ShareLinks
-              longUrl={shareUrls.long}
-              shortUrl={shareUrls.short}
-              progress={transferProgress}
-            />
+            <ShareLinks longUrl={shareUrls.long} progress={transferProgress} />
           )}
         </div>
       </main>
