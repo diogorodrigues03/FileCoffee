@@ -51,7 +51,7 @@ async fn handle_connection(ws: warp::ws::WebSocket, rooms: Rooms) {
     println!("New WebSocket connection!");
     let rooms_guard = rooms.read().await;
     for room_id in rooms_guard.keys() {
-        println!("Room ID: {}", room_id);
+        println!("Existing Rooms: {}", room_id);
     }
     drop(rooms_guard);
 

@@ -127,14 +127,24 @@ pub async fn handle_client_message(
 pub async fn cleanup_peer(current_room: Arc<RwLock<Option<(String, usize)>>>, rooms: Rooms) {
     let current = current_room.read().await;
     if let Some((room_id, peer_index)) = current.as_ref() {
-        let rooms_map = rooms.read().await;
-        if let Some(room) = rooms_map.get(room_id) {
+        let room_id = room_id.clone();
+
+        let rooms_map_read = rooms.read().await;
+        if let Some(room) = rooms_map_read.get(&room_id) {
             let mut peers = room.peers().write().await;
             if *peer_index < peers.len() {
                 peers.remove(*peer_index);
             }
-            // If the room is empty, we could remove it from the map
-            // (would need to upgrade to write lock on rooms_map)
+
+            // Let's remove the room if it's empty
+            if peers.is_empty(){
+                drop(peers);
+                drop(rooms_map_read);
+
+                let mut rooms_map_write = rooms.write().await;
+                rooms_map_write.remove(&room_id);
+                println!("Room {} was empty and has been removed", room_id);
+            }
         }
     }
 }
