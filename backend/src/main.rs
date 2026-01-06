@@ -1,5 +1,6 @@
 mod handler;
 mod room;
+mod slug_generator;
 mod store;
 mod types;
 use futures::{SinkExt, StreamExt};

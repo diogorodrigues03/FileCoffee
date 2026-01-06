@@ -15,7 +15,27 @@ pub async fn handle_client_message(
     match msg {
         ClientMessage::CreateRoom { password } => {
             println!("Handling CreateRoom request");
-            let room_id = Uuid::new_v4().to_string();
+            
+            // Try to generate a unique slug
+            let mut room_id = String::new();
+            let mut attempts = 0;
+            const MAX_ATTEMPTS: u8 = 5;
+
+            while attempts < MAX_ATTEMPTS {
+                 let candidate = crate::slug_generator::generate_slug();
+                 if rooms.get(&candidate).await.is_none() {
+                     room_id = candidate;
+                     break;
+                 }
+                 attempts += 1;
+            }
+
+            // Fallback to UUID if slug generation fails (unlikely but safe)
+            if room_id.is_empty() {
+                room_id = Uuid::new_v4().to_string();
+                println!("Slug collision limit reached, falling back to UUID: {}", room_id);
+            }
+
             let room = Room::new(room_id.clone(), password);
             println!("Created new room: {}", room_id);
 
