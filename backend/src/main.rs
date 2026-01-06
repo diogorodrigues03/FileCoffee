@@ -1,10 +1,10 @@
 mod handler;
 mod room;
+mod store;
 mod types;
 use futures::{SinkExt, StreamExt};
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use types::{ClientMessage, Rooms, ServerMessage};
 use warp::{Filter, ws::Message};
 use crate::handler::check_room_handler;
@@ -12,7 +12,7 @@ use crate::handler::check_room_handler;
 #[tokio::main]
 async fn main() {
     // Initialize the shared rooms storage
-    let rooms: Rooms = Arc::new(RwLock::new(HashMap::new()));
+    let rooms: Rooms = Arc::new(crate::store::InMemoryRoomStore::new());
     let rooms_filter = warp::any().map(move || rooms.clone());
 
     // Setup CORS
@@ -49,11 +49,6 @@ async fn main() {
 async fn handle_connection(ws: warp::ws::WebSocket, rooms: Rooms) {
     // Can read/write messages and manage rooms using the `rooms` storage
     println!("New WebSocket connection!");
-    let rooms_guard = rooms.read().await;
-    for room_id in rooms_guard.keys() {
-        println!("Existing Rooms: {}", room_id);
-    }
-    drop(rooms_guard);
 
     // Split socket into sender and receiver
     let (mut ws_tx, mut ws_rx) = ws.split();

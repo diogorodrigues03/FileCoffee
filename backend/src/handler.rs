@@ -26,9 +26,7 @@ pub async fn handle_client_message(
             drop(room_peers); // Release the lock
 
             // Store room in the global rooms map
-            let mut rooms_map = rooms.write().await;
-            rooms_map.insert(room_id.clone(), room);
-            drop(rooms_map);
+            rooms.insert(room).await;
 
             // Update this peer's current room
             let mut current = current_room.write().await;
@@ -45,9 +43,8 @@ pub async fn handle_client_message(
         ClientMessage::JoinRoom { room_id, password } => {
             println!("Handling JoinRoom request for room_id: {}", room_id);
             // Check if the room exists
-            let rooms_map = rooms.read().await;
-            let room = match rooms_map.get(&room_id) {
-                Some(r) => r.clone(),
+            let room = match rooms.get(&room_id).await {
+                Some(r) => r,
                 None => {
                     let error = ServerMessage::Error {
                         message: "Room not found".to_string(),
@@ -56,7 +53,6 @@ pub async fn handle_client_message(
                     return;
                 }
             };
-            drop(rooms_map);
 
             // Check password
             if room.password.is_some() && room.password != password {
@@ -106,12 +102,10 @@ pub async fn handle_client_message(
             drop(current);
 
             // Get the room
-            let rooms_map = rooms.read().await;
-            let room = match rooms_map.get(&room_id) {
-                Some(r) => r.clone(),
+            let room = match rooms.get(&room_id).await {
+                Some(r) => r,
                 None => return,
             };
-            drop(rooms_map);
 
             // Broadcast the signal to all other peers
             let signal = ServerMessage::Signal { data };
@@ -129,8 +123,7 @@ pub async fn cleanup_peer(current_room: Arc<RwLock<Option<(String, usize)>>>, ro
     if let Some((room_id, peer_index)) = current.as_ref() {
         let room_id = room_id.clone();
 
-        let rooms_map_read = rooms.read().await;
-        if let Some(room) = rooms_map_read.get(&room_id) {
+        if let Some(room) = rooms.get(&room_id).await {
             let mut peers = room.peers().write().await;
             if *peer_index < peers.len() {
                 peers.remove(*peer_index);
@@ -139,10 +132,8 @@ pub async fn cleanup_peer(current_room: Arc<RwLock<Option<(String, usize)>>>, ro
             // Let's remove the room if it's empty
             if peers.is_empty(){
                 drop(peers);
-                drop(rooms_map_read);
 
-                let mut rooms_map_write = rooms.write().await;
-                rooms_map_write.remove(&room_id);
+                rooms.remove(&room_id).await;
                 println!("Room {} was empty and has been removed", room_id);
             }
         }
@@ -150,11 +141,9 @@ pub async fn cleanup_peer(current_room: Arc<RwLock<Option<(String, usize)>>>, ro
 }
 
 pub async fn check_room_handler(room_id: String, rooms: Rooms) -> Result<impl warp::Reply, warp::Rejection> {
-    let rooms_map = rooms.read().await;
-
-    if(rooms_map.contains_key(&room_id)){
+    if let Some(room) = rooms.get(&room_id).await {
         // The Room exists, check if it has a password
-        let has_password = rooms_map.get(&room_id).unwrap().password.is_some();
+        let has_password = room.password.is_some();
 
         let message = ServerMessage::RoomExists { exists: true, has_password };
 
