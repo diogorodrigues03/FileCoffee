@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { API_BASE_URL } from "@/config";
 
 interface UseRoomValidationResult {
   isValidating: boolean;
@@ -28,7 +29,7 @@ export const useRoomValidation = (
 
       try {
         const response = await fetch(
-          `http://localhost:3030/api/rooms/${roomId}`,
+          `${API_BASE_URL}/api/rooms/${roomId}`,
         );
 
         if (response.ok) {

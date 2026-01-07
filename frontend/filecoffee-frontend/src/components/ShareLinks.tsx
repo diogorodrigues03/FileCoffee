@@ -9,9 +9,14 @@ import { Progress } from "@/components/ui/progress";
 interface ShareLinksProps {
   longUrl: string;
   progress: number;
+  isConnected: boolean;
 }
 
-export const ShareLinks = ({ longUrl, progress }: ShareLinksProps) => {
+export const ShareLinks = ({
+  longUrl,
+  progress,
+  isConnected,
+}: ShareLinksProps) => {
   const [copiedLong, setCopiedLong] = useState(false);
 
   const handleCopy = async (text: string) => {
@@ -71,23 +76,40 @@ export const ShareLinks = ({ longUrl, progress }: ShareLinksProps) => {
         </div>
 
         <div className="pt-4 border-t border-border">
+          {!isConnected && (
+            <p className="text-sm text-muted-foreground text-center">
+              Waiting for peer to join...
+            </p>
+          )}
+
+          {isConnected && progress === 0 && (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground text-center">
+                Peer connected. Preparing transfer...
+              </p>
+              <Progress value={0} />
+            </div>
+          )}
+
           {progress > 0 && progress < 100 && (
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground text-center">
-                Peer is downloading... {progress.toFixed(0)}%
+                Transferring... {progress.toFixed(0)}%
               </p>
               <Progress value={progress} />
             </div>
           )}
+
           {progress === 100 && (
-            <p className="text-sm text-muted-foreground text-center">
-              Transfer Complete!
-            </p>
-          )}
-          {progress === 0 && (
-            <p className="text-sm text-muted-foreground text-center">
-              These links are active and ready to receive connections
-            </p>
+            <div className="space-y-2">
+              <p className="text-sm text-green-600 font-medium text-center">
+                Transfer Complete!
+              </p>
+              <Progress
+                value={100}
+                className="bg-green-100 [&>div]:bg-green-600"
+              />
+            </div>
           )}
         </div>
       </div>

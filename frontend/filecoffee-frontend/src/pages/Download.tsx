@@ -12,6 +12,9 @@ import {
 } from "@/constants/enums.ts";
 import { useParams } from "react-router-dom";
 import { useRoomValidation } from "@/hooks/useRoomValidation.ts";
+import { fetchIceServers } from "@/lib/utils";
+import { toast } from "sonner";
+import { WS_BASE_URL } from "@/config";
 
 const Download = () => {
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.PASSWORD);
@@ -41,6 +44,10 @@ const Download = () => {
     size: number;
     type: string;
   } | null>(null);
+  
+  // Store ICE servers promise so we can await it without delay later
+  const iceServersPromiseRef = useRef<Promise<import("@/lib/utils").IceServer[]> | null>(null);
+  const candidateQueueRef = useRef<RTCIceCandidate[]>([]);
 
   useEffect(() => {
     // Cleanup unmount
@@ -54,15 +61,26 @@ const Download = () => {
   function handlePasswordSubmit(password: string) {
     if (!room_id) return;
 
-    // Close existing connection if any
-    if (wsRef.current) {
-      wsRef.current.close();
+    // Reset everything for a fresh attempt
+    if (wsRef.current) wsRef.current.close();
+    if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+        peerConnectionRef.current = null;
     }
-
+    candidateQueueRef.current = [];
+    receivedChunksRef.current = [];
+    receivedBytesRef.current = 0;
+    setProgress(0);
+    setDownloadUrl(null);
     setError(null);
 
+    const toastId = toast.loading("Connecting to room...");
+
+    // Start fetching ICE servers immediately when we start connecting
+    iceServersPromiseRef.current = fetchIceServers();
+
     // Create the WebSocket connection
-    const ws = new WebSocket("ws://localhost:3030/ws");
+    const ws = new WebSocket(`${WS_BASE_URL}/ws`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -82,16 +100,29 @@ const Download = () => {
 
         switch (message.type) {
           case ServerMessageType.RoomJoined:
+            toast.dismiss(toastId);
+            toast.success("Joined room successfully!");
             setCurrentView(ViewType.DOWNLOAD);
+            break;
+          case ServerMessageType.PeerLeft:
+            toast.info("Peer disconnected.");
+            if (peerConnectionRef.current) {
+                peerConnectionRef.current.close();
+                peerConnectionRef.current = null;
+            }
             break;
           case ServerMessageType.Signal: {
             const signal = message.data as any;
 
             if (signal.type === SignalLabelType.Offer) {
               console.log("Received WebRTC Offer. Creating answer...");
+              toast.info("Receiving file transfer offer...");
 
+              // Use pre-fetched servers or fetch now if missing
+              const iceServers = await (iceServersPromiseRef.current || fetchIceServers());
+              
               const peerConnection = new RTCPeerConnection({
-                iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+                iceServers: iceServers,
               });
               peerConnectionRef.current = peerConnection;
 
@@ -100,7 +131,10 @@ const Download = () => {
                 const dc = event.channel;
                 console.log("Data Channel Received:", dc.label);
 
-                dc.onopen = () => console.log("Data Channel OPEN!");
+                dc.onopen = () => {
+                    console.log("Data Channel OPEN!");
+                    toast.success("Connected to peer! Waiting for data...");
+                };
 
                 dc.onmessage = (e) => {
                   const data = e.data;
@@ -120,6 +154,7 @@ const Download = () => {
                         setProgress(0); // Reset progress
                         setDownloadUrl(null); // Reset download URL
                         setFileName(metadata.fileName); // Set the file name
+                        toast.info(`Receiving ${metadata.fileName}...`);
                       }
                     } catch (err) {
                       console.error("Error parsing metadata:", err);
@@ -171,6 +206,7 @@ const Download = () => {
                       const url = URL.createObjectURL(blob);
                       setDownloadUrl(url);
                       setFileName(fileMetadataRef.current.name);
+                      toast.success("File transfer complete!");
                     }
                   }
                 };
@@ -193,6 +229,16 @@ const Download = () => {
               await peerConnection.setRemoteDescription(
                 new RTCSessionDescription(signal),
               );
+
+              // Process queued candidates AFTER remote description is set
+              while (candidateQueueRef.current.length > 0) {
+                  const candidate = candidateQueueRef.current.shift();
+                  if (candidate) {
+                      console.log("Adding queued candidate");
+                      await peerConnection.addIceCandidate(candidate);
+                  }
+              }
+
               const answer = await peerConnection.createAnswer();
               await peerConnection.setLocalDescription(answer);
 
@@ -205,16 +251,21 @@ const Download = () => {
                 );
               }
             } else if (
-              signal.type === SignalLabelType.Candidate &&
-              peerConnectionRef.current
+              signal.type === SignalLabelType.Candidate
             ) {
-              await peerConnectionRef.current.addIceCandidate(
-                new RTCIceCandidate(signal.candidate),
-              );
+              const candidate = new RTCIceCandidate(signal.candidate);
+              if (peerConnectionRef.current?.remoteDescription) {
+                  await peerConnectionRef.current.addIceCandidate(candidate);
+              } else {
+                  console.log("Queueing candidate (PC not ready or RD null)");
+                  candidateQueueRef.current.push(candidate);
+              }
             }
             break;
           }
           case ServerMessageType.Error:
+            toast.dismiss(toastId);
+            toast.error(message.message);
             setError(message.message);
             break;
           default:
@@ -222,18 +273,25 @@ const Download = () => {
         }
       } catch (e) {
         console.error("Failed to parse message:", e);
+        toast.dismiss(toastId);
+        toast.error("An unexpected error occurred.");
         setError("An unexpected error occurred.");
       }
     };
 
     ws.onerror = (error) => {
       console.error("WebSocket error:", error);
+      toast.dismiss(toastId);
+      toast.error("Failed to connect to the server.");
       setError("Failed to connect to the server.");
     };
 
+
     ws.onclose = () => {
       console.log("WebSocket connection closed");
-      wsRef.current = null;
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      }
     };
   }
 
@@ -292,12 +350,7 @@ const Download = () => {
           )}
 
           {currentView === ViewType.PASSWORD && (
-            <>
               <EnterPassword handlePasswordSubmit={handlePasswordSubmit} />
-              {error && (
-                <p className="text-red-500 text-center mt-4">{error}</p>
-              )}
-            </>
           )}
         </div>
       </main>

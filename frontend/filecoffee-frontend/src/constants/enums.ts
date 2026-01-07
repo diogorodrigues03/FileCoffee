@@ -23,16 +23,24 @@ export enum ServerMessageType {
   RoomCreated = "RoomCreated",
   RoomJoined = "RoomJoined",
   PeerJoined = "PeerJoined",
+  PeerLeft = "PeerLeft",
   Signal = "Signal",
   Error = "Error",
+  RoomExists = "RoomExists",
 }
 
 export type ServerMessage =
   | { type: ServerMessageType.RoomCreated; room_id: string }
   | { type: ServerMessageType.RoomJoined }
   | { type: ServerMessageType.PeerJoined }
+  | { type: ServerMessageType.PeerLeft }
   | { type: ServerMessageType.Signal; data: JSON }
-  | { type: ServerMessageType.Error; message: string };
+  | { type: ServerMessageType.Error; message: string }
+  | {
+      type: ServerMessageType.RoomExists;
+      exists: boolean;
+      has_password: boolean;
+    };
 
 export enum SignalLabelType {
   Offer = "offer",

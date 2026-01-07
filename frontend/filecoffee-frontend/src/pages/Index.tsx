@@ -12,12 +12,16 @@ import {
   DATA_CHANNEL_LABEL,
 } from "@/constants/enums.ts";
 import coffeeLogoImg from "@/assets/coffee-logo.png";
+import { fetchIceServers } from "@/lib/utils";
+import { toast } from "sonner";
+import { WS_BASE_URL } from "@/config";
 
 const Index = () => {
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.UPLOAD);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [shareUrls, setShareUrls] = useState<{ long: string } | null>(null);
   const [transferProgress, setTransferProgress] = useState<number>(0);
+  const [isConnected, setIsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
@@ -38,8 +42,9 @@ const Index = () => {
   };
 
   const handleStart = async (password?: string) => {
+    const toastId = toast.loading("Creating room...");
     // Create the WebSocket connection
-    const ws = new WebSocket("ws://localhost:3030/ws");
+    const ws = new WebSocket(`${WS_BASE_URL}/ws`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -59,6 +64,8 @@ const Index = () => {
 
         switch (message.type) {
           case ServerMessageType.RoomCreated: {
+            toast.dismiss(toastId);
+            toast.success("Room created! Ready to share.");
             const { room_id } = message;
 
             //TODO: Implement the urls properly
@@ -72,12 +79,39 @@ const Index = () => {
             setCurrentView(ViewType.SHARE);
             break;
           }
+          case ServerMessageType.PeerLeft:
+            toast.info("Peer disconnected.");
+            setIsConnected(false);
+            setTransferProgress(0);
+            if (peerConnectionRef.current) {
+                peerConnectionRef.current.close();
+                peerConnectionRef.current = null;
+            }
+            if (dataChannelRef.current) {
+                dataChannelRef.current.close();
+                dataChannelRef.current = null;
+            }
+            break;
           case ServerMessageType.PeerJoined: {
             console.log("Peer joined! Starting WebRTC connection...");
+            toast.info("A peer has joined! connecting...");
+            setIsConnected(true);
+            setTransferProgress(0);
+
+            // Clean up existing connection if any
+            if (peerConnectionRef.current) {
+                peerConnectionRef.current.close();
+            }
+            if (dataChannelRef.current) {
+                dataChannelRef.current.close();
+            }
 
             // First, create the RTCPeerConnection
+            const iceServers = await fetchIceServers();
+            console.log("Using ICE servers:", iceServers);
+            
             const peerConnection = new RTCPeerConnection({
-              iceServers: [{ urls: "stun:stun.l.google.com:19302" }], // Google STUN Servers
+              iceServers: iceServers,
             });
             peerConnectionRef.current = peerConnection;
 
@@ -88,6 +122,7 @@ const Index = () => {
 
             dataChannel.onopen = () => {
               console.log("Data channel opened");
+              toast.success("Connected! Sending file...");
 
               if (!selectedFile) return;
 
@@ -138,7 +173,9 @@ const Index = () => {
                   typeof msg.percent === "number"
                 ) {
                   setTransferProgress(msg.percent);
-                  console.log(`Receiver progress: ${msg.percent}%`);
+                  if (msg.percent === 100) {
+                      toast.success("File transfer completed successfully!");
+                  }
                 }
               } catch (e) {
                 // Ignore binary data or other non-JSON messages
@@ -176,6 +213,7 @@ const Index = () => {
               }
             } catch (error) {
               console.error("Failed to create offer:", error);
+              toast.error("Failed to create connection offer.");
             }
 
             break;
@@ -199,23 +237,31 @@ const Index = () => {
             break;
           }
           case ServerMessageType.Error:
+            toast.dismiss(toastId);
             console.error("Server error:", message.message);
+            toast.error(message.message);
             break;
           default:
             break;
         }
       } catch (e) {
+        toast.dismiss(toastId);
         console.error("Failed to parse message:", e);
+        toast.error("Failed to parse server message.");
       }
     };
 
     ws.onerror = (error) => {
       console.error("WebSocket error:", error);
+      toast.dismiss(toastId);
+      toast.error("Failed to connect to server.");
     };
 
     ws.onclose = () => {
       console.log("WebSocket connection closed");
-      wsRef.current = null;
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      }
     };
   };
 
@@ -258,7 +304,11 @@ const Index = () => {
           )}
 
           {currentView === ViewType.SHARE && shareUrls && (
-            <ShareLinks longUrl={shareUrls.long} progress={transferProgress} />
+            <ShareLinks
+              longUrl={shareUrls.long}
+              progress={transferProgress}
+              isConnected={isConnected}
+            />
           )}
         </div>
       </main>
