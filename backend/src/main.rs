@@ -1,4 +1,5 @@
 mod handler;
+mod ice;
 mod room;
 mod slug_generator;
 mod store;
@@ -9,9 +10,12 @@ use tokio::sync::{mpsc, RwLock};
 use types::{ClientMessage, Rooms, ServerMessage};
 use warp::{Filter, ws::Message};
 use crate::handler::check_room_handler;
+use dotenvy::dotenv;
 
 #[tokio::main]
 async fn main() {
+    dotenv().ok();
+
     // Initialize the shared rooms storage
     let rooms: Rooms = Arc::new(crate::store::InMemoryRoomStore::new());
     let rooms_filter = warp::any().map(move || rooms.clone());
@@ -27,6 +31,14 @@ async fn main() {
         .and(rooms_filter.clone())
         .and_then(check_room_handler);
 
+    // ICE Servers route GET /api/ice-servers
+    let ice_servers_route = warp::path!("api" / "ice-servers")
+        .and(warp::get())
+        .map(|| {
+            let config = crate::ice::get_ice_servers();
+            warp::reply::json(&config)
+        });
+
     // WebSocket endpoint
     let ws_route =
         warp::path("ws")
@@ -40,11 +52,13 @@ async fn main() {
     // The order matters, checked from top to bottom
     // Attach CORS at the end to apply to all routes
     let routes = check_rooms_route
+        .or(ice_servers_route)
         .or(ws_route)
         .with(cors);
 
-    println!("Server running on http://localhost:3030");
-    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+    let port = std::env::var("PORT").unwrap_or("3030".to_string()).parse::<u16>().unwrap_or(3030);
+    println!("Server running on http://0.0.0.0:{}", port);
+    warp::serve(routes).run(([0, 0, 0, 0], port)).await;
 }
 
 async fn handle_connection(ws: warp::ws::WebSocket, rooms: Rooms) {

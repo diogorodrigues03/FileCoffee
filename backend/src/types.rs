@@ -18,6 +18,7 @@ pub enum ServerMessage {
     RoomCreated { room_id: String },
     RoomJoined,
     PeerJoined,
+    PeerLeft,
     Signal { data: serde_json::Value },
     Error { message: String },
     RoomExists { exists: bool, has_password: bool },

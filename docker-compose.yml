@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - PORT=3030
+      - TURN_URL=turn:coturn:3478
+      - TURN_SECRET=development_secret_key
+    ports:
+      - "3030:3030"
+    depends_on:
+      - coturn
+
+  frontend:
+    build:
+      context: ./frontend/filecoffee-frontend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+  coturn:
+    image: coturn/coturn
+    restart: always
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "5349:5349/tcp"
+      - "5349:5349/udp"
+      - "49160-49200:49160-49200/udp"
+    command:
+      - -n
+      - --log-file=stdout
+      - --min-port=49160
+      - --max-port=49200
+      - --use-auth-secret
+      - --static-auth-secret=development_secret_key
+            - --realm=localhost
+      

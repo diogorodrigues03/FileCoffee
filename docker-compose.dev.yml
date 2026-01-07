@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    environment:
+      - PORT=3030
+      - TURN_URL=turn:coturn:3478
+      - TURN_SECRET=development_secret_key
+    ports:
+      - "3030:3030"
+    volumes:
+      - ./backend:/usr/src/app
+      - /usr/src/app/target # Avoid overwriting container target with host target
+    depends_on:
+      - coturn
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    environment:
+      - VITE_API_BASE_URL=http://localhost:3030
+      - VITE_WS_BASE_URL=ws://localhost:3030
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./frontend/filecoffee-frontend:/app
+      - /app/node_modules
+    command: sh -c "npm install && npm run dev -- --host"
+    depends_on:
+      - backend
+
+  coturn:
+    image: coturn/coturn
+    restart: always
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "5349:5349/tcp"
+      - "5349:5349/udp"
+      - "49160-49200:49160-49200/udp"
+    command:
+      - -n
+      - --log-file=stdout
+      - --min-port=49160
+      - --max-port=49200
+      - --use-auth-secret
+      - --static-auth-secret=development_secret_key
+      - --realm=localhost

@@ -76,6 +76,7 @@ pub async fn handle_client_message(
 
             // Check password
             if room.password.is_some() && room.password != password {
+                println!("Invalid password attempt for room_id: {}", room_id);
                 let error = ServerMessage::Error {
                     message: "Invalid password".to_string(),
                 };
@@ -142,19 +143,28 @@ pub async fn cleanup_peer(current_room: Arc<RwLock<Option<(String, usize)>>>, ro
     let current = current_room.read().await;
     if let Some((room_id, peer_index)) = current.as_ref() {
         let room_id = room_id.clone();
+        let peer_index = *peer_index;
 
         if let Some(room) = rooms.get(&room_id).await {
             let mut peers = room.peers().write().await;
-            if *peer_index < peers.len() {
-                peers.remove(*peer_index);
+            if peer_index < peers.len() {
+                peers.remove(peer_index);
             }
+            let is_empty = peers.is_empty();
+            drop(peers);
 
             // Let's remove the room if it's empty
-            if peers.is_empty(){
-                drop(peers);
-
+            if is_empty {
                 rooms.remove(&room_id).await;
                 println!("Room {} was empty and has been removed", room_id);
+            } else {
+                // Notify others that a peer left
+                let notify = ServerMessage::PeerLeft;
+                room.broadcast(
+                    Message::text(serde_json::to_string(&notify).unwrap()),
+                    None,
+                )
+                .await;
             }
         }
     }
