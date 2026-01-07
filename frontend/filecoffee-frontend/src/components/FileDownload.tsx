@@ -8,7 +8,11 @@ interface FileDownloadProps {
   downloadUrl: string | null;
 }
 
-const FileDownload = ({ progress, fileName, downloadUrl }: FileDownloadProps) => {
+const FileDownload = ({
+  progress,
+  fileName,
+  downloadUrl,
+}: FileDownloadProps) => {
   return (
     <div className="flex flex-col items-center mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500 w-full max-w-md">
       <div className="bg-card p-8 rounded-2xl shadow-medium border border-border w-full">
@@ -22,7 +26,7 @@ const FileDownload = ({ progress, fileName, downloadUrl }: FileDownloadProps) =>
             </h2>
           </div>
         </div>
-        
+
         {downloadUrl ? (
           <div className="flex items-center justify-center mb-6">
             <a href={downloadUrl} download={fileName}>
@@ -34,7 +38,7 @@ const FileDownload = ({ progress, fileName, downloadUrl }: FileDownloadProps) =>
             Transferring file... {progress.toFixed(0)}%
           </div>
         )}
-        
+
         <div>
           <Progress value={progress} />
         </div>
@@ -44,4 +48,3 @@ const FileDownload = ({ progress, fileName, downloadUrl }: FileDownloadProps) =>
 };
 
 export default FileDownload;
-

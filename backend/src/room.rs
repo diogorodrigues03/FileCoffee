@@ -35,4 +35,8 @@ impl Room {
     pub fn peers(&self) -> &Arc<RwLock<Vec<PeerSender>>> {
         &self.peers
     }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
 }

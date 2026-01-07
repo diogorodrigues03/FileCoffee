@@ -1,8 +1,34 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { API_BASE_URL } from "../config";
 
 export function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
+}
+
+export interface IceServer {
+    urls: string;
+    username?: string;
+    credential?: string;
+}
+
+export interface IceConfig {
+    iceServers: IceServer[];
+}
+
+export async function fetchIceServers(): Promise<IceServer[]> {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/ice-servers`);
+        if (!response.ok) {
+            throw new Error("Failed to fetch ICE servers");
+        }
+        const config: IceConfig = await response.json();
+        return config.iceServers;
+    } catch (error) {
+        console.error("Error fetching ICE servers:", error);
+        // Fallback to Google STUN if fetch fails
+        return [{ urls: "stun:stun.l.google.com:19302" }];
+    }
 }
 
 export function getFileSize(file: { size: number }): string {
