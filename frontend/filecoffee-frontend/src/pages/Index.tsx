@@ -7,14 +7,11 @@ import {
   ClientMessage,
   ServerMessage,
   ClientMessageType,
-  ServerMessageType,
-  SignalLabelType,
-  DATA_CHANNEL_LABEL,
 } from "@/constants/enums.ts";
 import coffeeLogoImg from "@/assets/coffee-logo.png";
-import { fetchIceServers } from "@/lib/utils";
 import { toast } from "sonner";
 import { WS_BASE_URL } from "@/config";
+import { HandlerContext, WebSocketStrategyManager } from "@/lib/strategies";
 
 const Index = () => {
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.UPLOAD);
@@ -62,188 +59,21 @@ const Index = () => {
         const message: ServerMessage = JSON.parse(event.data);
         console.log("WebSocket message received:", message);
 
-        switch (message.type) {
-          case ServerMessageType.RoomCreated: {
-            toast.dismiss(toastId);
-            toast.success("Room created! Ready to share.");
-            const { room_id } = message;
+        const context: HandlerContext = {
+          setShareUrls,
+          setCurrentView,
+          setIsConnected,
+          setTransferProgress,
+          toast,
+          wsRef,
+          peerConnectionRef,
+          dataChannelRef,
+          selectedFile,
+          toastId,
+        };
 
-            //TODO: Implement the urls properly
-            // Generate share URLs with the real room ID for now? Implement random URLs later?
-            const baseUrl = window.location.origin;
-            const longUrl = `${baseUrl}/download/${room_id}`;
-
-            setShareUrls({
-              long: longUrl,
-            });
-            setCurrentView(ViewType.SHARE);
-            break;
-          }
-          case ServerMessageType.PeerLeft:
-            toast.info("Peer disconnected.");
-            setIsConnected(false);
-            setTransferProgress(0);
-            if (peerConnectionRef.current) {
-                peerConnectionRef.current.close();
-                peerConnectionRef.current = null;
-            }
-            if (dataChannelRef.current) {
-                dataChannelRef.current.close();
-                dataChannelRef.current = null;
-            }
-            break;
-          case ServerMessageType.PeerJoined: {
-            console.log("Peer joined! Starting WebRTC connection...");
-            toast.info("A peer has joined! connecting...");
-            setIsConnected(true);
-            setTransferProgress(0);
-
-            // Clean up existing connection if any
-            if (peerConnectionRef.current) {
-                peerConnectionRef.current.close();
-            }
-            if (dataChannelRef.current) {
-                dataChannelRef.current.close();
-            }
-
-            // First, create the RTCPeerConnection
-            const iceServers = await fetchIceServers();
-            console.log("Using ICE servers:", iceServers);
-            
-            const peerConnection = new RTCPeerConnection({
-              iceServers: iceServers,
-            });
-            peerConnectionRef.current = peerConnection;
-
-            // Create the Data Channel
-            const dataChannel =
-              peerConnection.createDataChannel(DATA_CHANNEL_LABEL);
-            dataChannelRef.current = dataChannel;
-
-            dataChannel.onopen = () => {
-              console.log("Data channel opened");
-              toast.success("Connected! Sending file...");
-
-              if (!selectedFile) return;
-
-              // 1. Send metadata first
-              const metaData = JSON.stringify({
-                type: "metadata",
-                fileName: selectedFile.name,
-                fileSize: selectedFile.size,
-                fileType: selectedFile.type,
-              });
-
-              dataChannel.send(metaData);
-
-              // 2. Read and Chunk the file
-              const CHUNK_SIZE = 16 * 1024; // 16KB chunks
-              const fileReader = new FileReader();
-
-              fileReader.onload = (e) => {
-                const buffer = e.target?.result as ArrayBuffer;
-                let offset = 0;
-
-                const sendChunk = () => {
-                  while (offset < buffer.byteLength) {
-                    // If the buffer is full, we'll wait a bit
-                    if (dataChannel.bufferedAmount > 10 * 1024 * 1024) {
-                      setTimeout(sendChunk, 100);
-                      return;
-                    }
-
-                    const chunk = buffer.slice(offset, offset + CHUNK_SIZE);
-                    dataChannel.send(chunk);
-                    offset += CHUNK_SIZE;
-
-                    // Let's update the UI here later
-                  }
-                };
-
-                sendChunk();
-              };
-
-              fileReader.readAsArrayBuffer(selectedFile);
-            };
-            dataChannel.onmessage = (event) => {
-              try {
-                const msg = JSON.parse(event.data);
-                if (
-                  msg.type === SignalLabelType.Progress &&
-                  typeof msg.percent === "number"
-                ) {
-                  setTransferProgress(msg.percent);
-                  if (msg.percent === 100) {
-                      toast.success("File transfer completed successfully!");
-                  }
-                }
-              } catch (e) {
-                // Ignore binary data or other non-JSON messages
-              }
-            };
-            dataChannel.onclose = () => {
-              console.log("Data channel closed");
-            };
-
-            peerConnection.onicecandidate = (event) => {
-              if (event.candidate && wsRef.current) {
-                wsRef.current.send(
-                  JSON.stringify({
-                    type: ClientMessageType.Signal,
-                    data: {
-                      type: SignalLabelType.Candidate,
-                      candidate: event.candidate,
-                    },
-                  }),
-                );
-              }
-            };
-
-            try {
-              const offer = await peerConnection.createOffer();
-              await peerConnection.setLocalDescription(offer);
-
-              if (wsRef.current) {
-                wsRef.current.send(
-                  JSON.stringify({
-                    type: ClientMessageType.Signal,
-                    data: offer,
-                  }),
-                );
-              }
-            } catch (error) {
-              console.error("Failed to create offer:", error);
-              toast.error("Failed to create connection offer.");
-            }
-
-            break;
-          }
-          case ServerMessageType.Signal: {
-            if (!peerConnectionRef.current) return;
-
-            const signal = message.data as any;
-
-            // Handle Answer from Receiver
-            if (signal.type === SignalLabelType.Answer) {
-              await peerConnectionRef.current.setRemoteDescription(
-                new RTCSessionDescription(signal),
-              );
-            } else if (signal.type === SignalLabelType.Candidate) {
-              await peerConnectionRef.current.addIceCandidate(
-                new RTCIceCandidate(signal.candidate),
-              );
-            }
-
-            break;
-          }
-          case ServerMessageType.Error:
-            toast.dismiss(toastId);
-            console.error("Server error:", message.message);
-            toast.error(message.message);
-            break;
-          default:
-            break;
-        }
+        const strategyManager = new WebSocketStrategyManager();
+        await strategyManager.handleMessage(message, context);
       } catch (e) {
         toast.dismiss(toastId);
         console.error("Failed to parse message:", e);
