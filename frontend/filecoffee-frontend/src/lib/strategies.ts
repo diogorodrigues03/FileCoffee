@@ -8,7 +8,6 @@ import {
 } from "@/constants/enums";
 import { fetchIceServers } from "@/lib/utils";
 
-// Define the context required by handlers
 export interface HandlerContext {
   setShareUrls: (urls: { long: string } | null) => void;
   setCurrentView: (view: ViewType) => void;
@@ -22,16 +21,14 @@ export interface HandlerContext {
   toastId: string | number;
 }
 
-// Strategy Interface
 export interface MessageStrategy {
   handle(message: ServerMessage, context: HandlerContext): Promise<void> | void;
 }
 
-// Concrete Strategies
 class RoomCreatedStrategy implements MessageStrategy {
   handle(message: ServerMessage, context: HandlerContext) {
     if (message.type !== ServerMessageType.RoomCreated) return;
-    
+
     context.toast.dismiss(context.toastId);
     context.toast.success("Room created! Ready to share.");
     const { room_id } = message;
@@ -142,7 +139,12 @@ class PeerJoinedStrategy implements MessageStrategy {
       dataChannel.send(metaData);
 
       // 2. Read and Chunk the file
-      const CHUNK_SIZE = 16 * 1024; // 16KB chunks
+      // Note: This might consume more memory on low-end devices but significantly speeds up transfer.
+      const CHUNK_SIZE = 256 * 1024;
+      const MAX_BUFFERED_AMOUNT = 64 * 1024 * 1024;
+
+      dataChannel.bufferedAmountLowThreshold = 0;
+
       let offset = 0;
       const fileReader = new FileReader();
 
@@ -165,14 +167,17 @@ class PeerJoinedStrategy implements MessageStrategy {
           return;
         }
 
-        // If the buffer is full, we'll wait a bit
-        if (dataChannel.bufferedAmount > 10 * 1024 * 1024) {
-          setTimeout(sendNextChunk, 100);
+        // If the buffer is full, wait for it to drain
+        if (dataChannel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
           return;
         }
 
         const slice = context.selectedFile.slice(offset, offset + CHUNK_SIZE);
         fileReader.readAsArrayBuffer(slice);
+      };
+
+      dataChannel.onbufferedamountlow = () => {
+        sendNextChunk();
       };
 
       sendNextChunk();
@@ -224,14 +229,13 @@ class SignalStrategy implements MessageStrategy {
 class ErrorStrategy implements MessageStrategy {
   handle(message: ServerMessage, context: HandlerContext) {
     if (message.type !== ServerMessageType.Error) return;
-    
+
     context.toast.dismiss(context.toastId);
     console.error("Server error:", message.message);
     context.toast.error(message.message);
   }
 }
 
-// Strategy Manager
 export class WebSocketStrategyManager {
   private strategies: Partial<Record<ServerMessageType, MessageStrategy>> = {};
 

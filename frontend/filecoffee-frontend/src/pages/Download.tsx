@@ -15,6 +15,10 @@ import { useRoomValidation } from "@/hooks/useRoomValidation.ts";
 import { fetchIceServers } from "@/lib/utils";
 import { toast } from "sonner";
 import { WS_BASE_URL } from "@/config";
+import {
+  DownloadHandlerContext,
+  DownloadWebSocketStrategyManager,
+} from "@/lib/download-strategies";
 
 const Download = () => {
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.PASSWORD);
@@ -44,13 +48,13 @@ const Download = () => {
     size: number;
     type: string;
   } | null>(null);
-  
-  // Store ICE servers promise so we can await it without delay later
-  const iceServersPromiseRef = useRef<Promise<import("@/lib/utils").IceServer[]> | null>(null);
+
+  const iceServersPromiseRef = useRef<Promise<
+    import("@/lib/utils").IceServer[]
+  > | null>(null);
   const candidateQueueRef = useRef<RTCIceCandidate[]>([]);
 
   useEffect(() => {
-    // Cleanup unmount
     return () => {
       if (wsRef.current) {
         wsRef.current.close();
@@ -64,8 +68,8 @@ const Download = () => {
     // Reset everything for a fresh attempt
     if (wsRef.current) wsRef.current.close();
     if (peerConnectionRef.current) {
-        peerConnectionRef.current.close();
-        peerConnectionRef.current = null;
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
     }
     candidateQueueRef.current = [];
     receivedChunksRef.current = [];
@@ -98,179 +102,26 @@ const Download = () => {
         const message: ServerMessage = JSON.parse(event.data);
         console.log("WebSocket message received:", message);
 
-        switch (message.type) {
-          case ServerMessageType.RoomJoined:
-            toast.dismiss(toastId);
-            toast.success("Joined room successfully!");
-            setCurrentView(ViewType.DOWNLOAD);
-            break;
-          case ServerMessageType.PeerLeft:
-            toast.info("Peer disconnected.");
-            if (peerConnectionRef.current) {
-                peerConnectionRef.current.close();
-                peerConnectionRef.current = null;
-            }
-            break;
-          case ServerMessageType.Signal: {
-            const signal = message.data as any;
+        const context: DownloadHandlerContext = {
+          setCurrentView,
+          setError,
+          setProgress,
+          setDownloadUrl,
+          setFileName,
+          toast,
+          toastId,
+          wsRef,
+          peerConnectionRef,
+          iceServersPromiseRef,
+          candidateQueueRef,
+          receivedChunksRef,
+          receivedBytesRef,
+          fileMetadataRef,
+          lastReportedProgress,
+        };
 
-            if (signal.type === SignalLabelType.Offer) {
-              console.log("Received WebRTC Offer. Creating answer...");
-              toast.info("Receiving file transfer offer...");
-
-              // Use pre-fetched servers or fetch now if missing
-              const iceServers = await (iceServersPromiseRef.current || fetchIceServers());
-              
-              const peerConnection = new RTCPeerConnection({
-                iceServers: iceServers,
-              });
-              peerConnectionRef.current = peerConnection;
-
-              // 2. Catch the Data Channel (Receiver waits for it)
-              peerConnection.ondatachannel = (event) => {
-                const dc = event.channel;
-                console.log("Data Channel Received:", dc.label);
-
-                dc.onopen = () => {
-                    console.log("Data Channel OPEN!");
-                    toast.success("Connected to peer! Waiting for data...");
-                };
-
-                dc.onmessage = (e) => {
-                  const data = e.data;
-
-                  // 1. Handle Metadata (String)
-                  if (typeof data === "string") {
-                    try {
-                      const metadata = JSON.parse(data);
-                      if (metadata.type === "metadata") {
-                        fileMetadataRef.current = {
-                          name: metadata.fileName,
-                          size: metadata.fileSize,
-                          type: metadata.fileType,
-                        };
-                        receivedChunksRef.current = [];
-                        receivedBytesRef.current = 0;
-                        setProgress(0); // Reset progress
-                        setDownloadUrl(null); // Reset download URL
-                        setFileName(metadata.fileName); // Set the file name
-                        toast.info(`Receiving ${metadata.fileName}...`);
-                      }
-                    } catch (err) {
-                      console.error("Error parsing metadata:", err);
-                    }
-                  }
-                  // 2. Handle Binary Chunk
-                  else if (data instanceof ArrayBuffer) {
-                    receivedChunksRef.current.push(data);
-                    receivedBytesRef.current += data.byteLength;
-
-                    // Update Progress UI (throttling could be added here if needed)
-                    if (
-                      fileMetadataRef.current &&
-                      fileMetadataRef.current.size > 0
-                    ) {
-                      const percent =
-                        (receivedBytesRef.current /
-                          fileMetadataRef.current.size) *
-                        100;
-                      setProgress(Math.round(percent));
-                    }
-
-                    const percent = Math.round(
-                      (receivedBytesRef.current /
-                        fileMetadataRef.current.size) *
-                        100,
-                    );
-
-                    if (percent > lastReportedProgress.current) {
-                      dc.send(
-                        JSON.stringify({
-                          type: SignalLabelType.Progress,
-                          percent: percent,
-                        }),
-                      );
-                    }
-
-                    lastReportedProgress.current = percent;
-
-                    // Check if finished
-                    if (
-                      fileMetadataRef.current &&
-                      receivedBytesRef.current >= fileMetadataRef.current.size
-                    ) {
-                      console.log("File transfer complete. Reassembling...");
-                      const blob = new Blob(receivedChunksRef.current, {
-                        type: fileMetadataRef.current.type,
-                      });
-                      const url = URL.createObjectURL(blob);
-                      setDownloadUrl(url);
-                      setFileName(fileMetadataRef.current.name);
-                      toast.success("File transfer complete!");
-                    }
-                  }
-                };
-              };
-
-              peerConnection.onicecandidate = (event) => {
-                if (event.candidate && wsRef.current) {
-                  wsRef.current.send(
-                    JSON.stringify({
-                      type: ClientMessageType.Signal,
-                      data: {
-                        type: SignalLabelType.Candidate,
-                        candidate: event.candidate,
-                      },
-                    }),
-                  );
-                }
-              };
-
-              await peerConnection.setRemoteDescription(
-                new RTCSessionDescription(signal),
-              );
-
-              // Process queued candidates AFTER remote description is set
-              while (candidateQueueRef.current.length > 0) {
-                  const candidate = candidateQueueRef.current.shift();
-                  if (candidate) {
-                      console.log("Adding queued candidate");
-                      await peerConnection.addIceCandidate(candidate);
-                  }
-              }
-
-              const answer = await peerConnection.createAnswer();
-              await peerConnection.setLocalDescription(answer);
-
-              if (wsRef.current) {
-                wsRef.current.send(
-                  JSON.stringify({
-                    type: ClientMessageType.Signal,
-                    data: answer,
-                  }),
-                );
-              }
-            } else if (
-              signal.type === SignalLabelType.Candidate
-            ) {
-              const candidate = new RTCIceCandidate(signal.candidate);
-              if (peerConnectionRef.current?.remoteDescription) {
-                  await peerConnectionRef.current.addIceCandidate(candidate);
-              } else {
-                  console.log("Queueing candidate (PC not ready or RD null)");
-                  candidateQueueRef.current.push(candidate);
-              }
-            }
-            break;
-          }
-          case ServerMessageType.Error:
-            toast.dismiss(toastId);
-            toast.error(message.message);
-            setError(message.message);
-            break;
-          default:
-            break;
-        }
+        const strategyManager = new DownloadWebSocketStrategyManager();
+        await strategyManager.handleMessage(message, context);
       } catch (e) {
         console.error("Failed to parse message:", e);
         toast.dismiss(toastId);
@@ -286,7 +137,6 @@ const Download = () => {
       setError("Failed to connect to the server.");
     };
 
-
     ws.onclose = () => {
       console.log("WebSocket connection closed");
       if (wsRef.current === ws) {
@@ -295,7 +145,6 @@ const Download = () => {
     };
   }
 
-  // Early return for Loading/Error states
   if (isValidating) {
     return (
       <div className="min-h-screen b-gradient-cream flex items-center justify-center">
@@ -350,7 +199,7 @@ const Download = () => {
           )}
 
           {currentView === ViewType.PASSWORD && (
-              <EnterPassword handlePasswordSubmit={handlePasswordSubmit} />
+            <EnterPassword handlePasswordSubmit={handlePasswordSubmit} />
           )}
         </div>
       </main>
