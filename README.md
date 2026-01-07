@@ -4,7 +4,7 @@ FileCoffee is a secure, real-time, peer-to-peer (P2P) file sharing application. 
 
 The application uses **WebRTC** for direct data transfer and a lightweight **Rust** backend for signaling. The frontend is built with **React**, **TypeScript**, and **Tailwind CSS** for a modern, responsive user experience.
 
-![FileCoffee Logo](frontend/filecoffee-frontend/public/coffee-logo.png)
+
 
 ## ✨ Features
 
@@ -12,8 +12,7 @@ The application uses **WebRTC** for direct data transfer and a lightweight **Rus
 - **Privacy First:** Since the server doesn't store files, your data remains private.
 - **Real-time:** Instant connection and transfer start.
 - **Password Protection:** Secure your file transfers with a password (optional).
-- **Modern UI:** Clean and intuitive interface built with Radix UI and Tailwind CSS.
-- **Cross-Platform:** Works in any modern web browser.
+
 
 ## 🏗 Architecture
 
@@ -21,22 +20,6 @@ FileCoffee operates on a P2P architecture:
 1.  **Signaling:** The **Rust** backend (`warp`) acts as a signaling server. It helps two peers (browsers) find each other and exchange connection details (SDP offers/answers and ICE candidates).
 2.  **Connection:** Once signaled, a direct **WebRTC** Data Channel is established between the two browsers.
 3.  **Transfer:** The file is chunked and streamed directly over the WebRTC channel.
-
-## 🛠 Tech Stack
-
-### Backend
-- **Language:** Rust 🦀
-- **Framework:** [Warp](https://github.com/seanmonstar/warp) (Web Server & WebSockets)
-- **Async Runtime:** Tokio
-- **Utilities:** Serde, UUID
-
-### Frontend
-- **Framework:** React 18 (via Vite)
-- **Language:** TypeScript
-- **Styling:** Tailwind CSS
-- **Components:** Radix UI (via shadcn/ui patterns), Lucide React (Icons)
-- **Routing:** React Router DOM
-- **State Management:** React Query (TanStack Query)
 
 ## 🚀 Getting Started
 
@@ -77,6 +60,35 @@ npm run dev
 ```
 
 The frontend will start on `http://localhost:5173` (by default).
+
+## 🐳 Docker
+
+You can also run the entire application (Backend + Frontend + COTURN) using Docker Compose.
+
+### Development Mode
+
+This runs the application in development mode with hot-reloading enabled for the frontend.
+
+```bash
+docker-compose -f docker-compose.dev.yml up --build
+```
+
+- **Frontend:** `http://localhost:8080`
+- **Backend:** `http://localhost:3030`
+- **COTURN:** Running on standard ports (3478, etc.)
+
+> **Note:** The Docker setup includes a local **COTURN** server to ensure P2P connections work reliably in isolated container networks.
+
+## ⚙️ Configuration
+
+The backend is configured via environment variables (or a `.env` file in the `backend/` directory).
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | The port the backend server listens on. | `3030` |
+| `TURN_URL` | The URL of your TURN server (e.g., `turn:your-turn-server:3478`). | `turn:127.0.0.1:3478` |
+| `TURN_SECRET` | The shared secret for TURN authentication. | `development_secret_key` |
+| `TURN_REALM` | The realm for the TURN server. | `localhost` |
 
 ## 📖 Usage
 
