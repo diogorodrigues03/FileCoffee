@@ -1,122 +1,62 @@
-mod handler;
+mod config;
+mod error;
+mod handlers;
 mod ice;
-mod room;
+mod models;
+mod routes;
+mod services;
 mod slug_generator;
 mod store;
-mod types;
-use futures::{SinkExt, StreamExt};
-use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
-use types::{ClientMessage, Rooms, ServerMessage};
-use warp::{Filter, ws::Message};
-use crate::handler::check_room_handler;
+
+use crate::config::Config;
+use crate::routes::{api_routes, ws_route};
+use crate::services::{RoomService, SignalingService};
+use crate::store::InMemoryRoomStore;
 use dotenvy::dotenv;
+use std::sync::Arc;
+use std::time::Duration;
+use warp::Filter;
 
 #[tokio::main]
 async fn main() {
     dotenv().ok();
 
-    // Initialize the shared rooms storage
-    let rooms: Rooms = Arc::new(crate::store::InMemoryRoomStore::new());
-    let rooms_filter = warp::any().map(move || rooms.clone());
+    // Initialize tracing (structured logging)
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .json()
+        .init();
 
-    // Setup CORS
-    let cors = warp::cors()
-        .allow_any_origin()
-        .allow_methods(vec!["GET"]);
+    let config = Arc::new(Config::from_env());
 
-    // Check room route GET /api/rooms/:room_id
-    let check_rooms_route = warp::path!("api" / "rooms" / String)
-        .and(warp::get())
-        .and(rooms_filter.clone())
-        .and_then(check_room_handler);
+    // Initialize services
+    let store = Arc::new(InMemoryRoomStore::new());
+    let room_service = Arc::new(RoomService::new(store.clone(), config.clone()));
+    let signaling_service = Arc::new(SignalingService::new());
 
-    // ICE Servers route GET /api/ice-servers
-    let ice_servers_route = warp::path!("api" / "ice-servers")
-        .and(warp::get())
-        .map(|| {
-            let config = crate::ice::get_ice_servers();
-            warp::reply::json(&config)
-        });
-
-    // WebSocket endpoint
-    let ws_route =
-        warp::path("ws")
-            .and(warp::ws())
-            .and(rooms_filter)
-            .map(|ws: warp::ws::Ws, rooms| {
-                ws.on_upgrade(move |socket| handle_connection(socket, rooms))
-            });
-
-    // -- COMBINE ROUTES --
-    // The order matters, checked from top to bottom
-    // Attach CORS at the end to apply to all routes
-    let routes = check_rooms_route
-        .or(ice_servers_route)
-        .or(ws_route)
-        .with(cors);
-
-    let port = std::env::var("PORT").unwrap_or("3030".to_string()).parse::<u16>().unwrap_or(3030);
-    println!("Server running on http://0.0.0.0:{}", port);
-    warp::serve(routes).run(([0, 0, 0, 0], port)).await;
-}
-
-async fn handle_connection(ws: warp::ws::WebSocket, rooms: Rooms) {
-    // Can read/write messages and manage rooms using the `rooms` storage
-    println!("New WebSocket connection!");
-
-    // Split socket into sender and receiver
-    let (mut ws_tx, mut ws_rx) = ws.split();
-
-    // Create a channel for this peer
-    // Other tasks can send messages to this peer via tx
-    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
-
-    // Track which room this peer is in
-    let current_room: Arc<RwLock<Option<(String, usize)>>> = Arc::new(RwLock::new(None));
-    let current_room_clone = current_room.clone();
-    let rooms_clone = rooms.clone();
-
-    // Spawn a task to forward messages from rx to the WebSocket
-    tokio::task::spawn(async move {
-        while let Some(message) = rx.recv().await {
-            if ws_tx.send(message).await.is_err() {
-                break;
-            }
+    // Spawn room cleanup task
+    let cleanup_room_service = room_service.clone();
+    let cleanup_config = config.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            cleanup_room_service
+                .cleanup_stale_rooms(cleanup_config.room_ttl())
+                .await;
         }
     });
 
-    // Process each incoming message
-    while let Some(result) = ws_rx.next().await {
-        let msg = match result {
-            Ok(msg) => msg,
-            Err(e) => {
-                eprintln!("WebSocket error: {}", e);
-                break;
-            }
-        };
+    // Setup CORS
+    let cors = warp::cors()
+        .allow_any_origin() // TODO: Restrict in production
+        .allow_methods(vec!["GET", "POST", "OPTIONS"]);
 
-        // Only process text messages
-        if let Ok(text) = msg.to_str() {
-            // Parse JSON into our ClientMessage enum
-            let client_msg: ClientMessage = match serde_json::from_str(text) {
-                Ok(m) => {
-                    println!("Received message: {:?}", m);
-                    m
-                }
-                Err(e) => {
-                    eprintln!("Failed to parse message: {}", e);
-                    let error = ServerMessage::Error {
-                        message: "Invalid message format".to_string(),
-                    };
-                    let _ = tx.send(Message::text(serde_json::to_string(&error).unwrap()));
-                    continue;
-                }
-            };
+    // Combine routes from modules
+    let routes = api_routes(room_service.clone())
+        .or(ws_route(room_service.clone(), signaling_service.clone()))
+        .with(cors);
 
-            handler::handle_client_message(client_msg, &tx, &rooms, &current_room).await;
-        }
-    }
-
-    handler::cleanup_peer(current_room_clone, rooms_clone).await;
+    tracing::info!(port = config.port, "Server starting");
+    warp::serve(routes).run(([0, 0, 0, 0], config.port)).await;
 }
