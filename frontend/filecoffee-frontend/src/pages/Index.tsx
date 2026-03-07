@@ -7,21 +7,29 @@ import {
   ClientMessage,
   ServerMessage,
   ClientMessageType,
-} from "@/constants/enums.ts";
+} from "@/constants/enums";
 import coffeeLogoImg from "@/assets/coffee-logo.png";
 import { toast } from "sonner";
 import { WS_BASE_URL } from "@/config";
-import { HandlerContext, WebSocketStrategyManager } from "@/lib/strategies";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { useWebRTC } from "@/hooks/useWebRTC";
+import { useFileTransfer } from "@/hooks/useFileTransfer";
+import { UploadStrategyManager, UploadHandlerContext } from "@/lib/strategies/upload";
 
 const Index = () => {
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.UPLOAD);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [shareUrls, setShareUrls] = useState<{ long: string } | null>(null);
-  const [transferProgress, setTransferProgress] = useState<number>(0);
-  const [isConnected, setIsConnected] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
-  const dataChannelRef = useRef<RTCDataChannel | null>(null);
+  
+  const { wsRef, isConnected: isWsConnected, connect: connectWs, disconnect: disconnectWs } = useWebSocket();
+  const { peerConnectionRef, dataChannelRef, createConnection, cleanup: cleanupWebRTC } = useWebRTC();
+  const [isPeerConnected, setIsPeerConnected] = useState(false);
+  
+  const { stats, initTransfer, updateTransfer, cancelTransfer: cancelTransferLogic } = useFileTransfer();
+  const isCanceledRef = useRef(false);
+  const isOffline = !navigator.onLine;
+
+  const strategyManagerRef = useRef(new UploadStrategyManager());
 
   const handleFileSelect = (file: File) => {
     setSelectedFile(file);
@@ -29,74 +37,70 @@ const Index = () => {
   };
 
   const handleCancel = () => {
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-
+    disconnectWs();
+    cleanupWebRTC();
+    cancelTransferLogic();
+    setIsPeerConnected(false);
     setSelectedFile(null);
     setCurrentView(ViewType.UPLOAD);
   };
 
   const handleStart = async (password?: string) => {
     const toastId = toast.loading("Creating room...");
-    // Create the WebSocket connection
-    const ws = new WebSocket(`${WS_BASE_URL}/ws`);
-    wsRef.current = ws;
+    
+    try {
+      const ws = await connectWs(`${WS_BASE_URL}/ws`);
 
-    ws.onopen = () => {
-      console.log("Connected to WebSocket");
       // Send CreateRoom message
       const msg: ClientMessage = {
         type: ClientMessageType.CreateRoom,
         password: password,
       };
       ws.send(JSON.stringify(msg));
-    };
 
-    ws.onmessage = async (event) => {
-      try {
-        const message: ServerMessage = JSON.parse(event.data);
-        console.log("WebSocket message received:", message);
+      ws.onmessage = async (event) => {
+        try {
+          const message: ServerMessage = JSON.parse(event.data);
+          console.log("WebSocket message received:", message);
 
-        const context: HandlerContext = {
-          setShareUrls,
-          setCurrentView,
-          setIsConnected,
-          setTransferProgress,
-          toast,
-          wsRef,
-          peerConnectionRef,
-          dataChannelRef,
-          selectedFile,
-          toastId,
-        };
+          const context: UploadHandlerContext = {
+            setShareUrls,
+            setCurrentView,
+            setIsConnected: setIsPeerConnected,
+            toast,
+            wsRef,
+            peerConnectionRef,
+            dataChannelRef,
+            createConnection,
+            selectedFile,
+            toastId,
+            initTransfer,
+            updateTransfer,
+            cancelTransfer: cancelTransferLogic,
+            isCanceledRef
+          };
 
-        const strategyManager = new WebSocketStrategyManager();
-        await strategyManager.handleMessage(message, context);
-      } catch (e) {
-        toast.dismiss(toastId);
-        console.error("Failed to parse message:", e);
-        toast.error("Failed to parse server message.");
-      }
-    };
+          await strategyManagerRef.current.handleMessage(message, context);
+        } catch (e) {
+          toast.dismiss(toastId);
+          console.error("Failed to parse message:", e);
+        }
+      };
 
-    ws.onerror = (error) => {
-      console.error("WebSocket error:", error);
+    } catch (error) {
       toast.dismiss(toastId);
       toast.error("Failed to connect to server.");
-    };
-
-    ws.onclose = () => {
-      console.log("WebSocket connection closed");
-      if (wsRef.current === ws) {
-        wsRef.current = null;
-      }
-    };
+    }
   };
 
   return (
     <div className="min-h-screen bg-gradient-cream flex flex-col">
+      {isOffline && (
+        <div className="bg-red-500 text-white text-center py-2 font-medium">
+          You are currently offline. Check your internet connection.
+        </div>
+      )}
+
       {/* Header */}
       {currentView !== ViewType.SHARE && (
         <header className="pt-12 pb-8 px-4">
@@ -136,8 +140,8 @@ const Index = () => {
           {currentView === ViewType.SHARE && shareUrls && (
             <ShareLinks
               longUrl={shareUrls.long}
-              progress={transferProgress}
-              isConnected={isConnected}
+              progress={stats?.percent || 0}
+              isConnected={isPeerConnected}
             />
           )}
         </div>

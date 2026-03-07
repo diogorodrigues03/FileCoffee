@@ -7,18 +7,18 @@ import {
   ClientMessage,
   ClientMessageType,
   ServerMessage,
-  ServerMessageType,
-  SignalLabelType,
-} from "@/constants/enums.ts";
+} from "@/constants/enums";
 import { useParams } from "react-router-dom";
-import { useRoomValidation } from "@/hooks/useRoomValidation.ts";
-import { fetchIceServers } from "@/lib/utils";
+import { useRoomValidation } from "@/hooks/useRoomValidation";
 import { toast } from "sonner";
 import { WS_BASE_URL } from "@/config";
 import {
   DownloadHandlerContext,
-  DownloadWebSocketStrategyManager,
-} from "@/lib/download-strategies";
+  DownloadStrategyManager,
+} from "@/lib/strategies/download";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { useWebRTC } from "@/hooks/useWebRTC";
+import { useFileTransfer } from "@/hooks/useFileTransfer";
 
 const Download = () => {
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.PASSWORD);
@@ -32,117 +32,99 @@ const Download = () => {
     error: validationError,
   } = useRoomValidation(action, room_id);
 
-  // WebSocket Refs
-  const wsRef = useRef<WebSocket | null>(null);
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  // Hooks
+  const { wsRef, connect: connectWs, disconnect: disconnectWs } = useWebSocket();
+  const { peerConnectionRef, createConnection, candidateQueueRef, cleanup: cleanupWebRTC } = useWebRTC();
+  const { stats, initTransfer, updateTransfer, cancelTransfer: cancelTransferLogic } = useFileTransfer();
 
-  // File Transfer State
-  const [progress, setProgress] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>("");
-  const lastReportedProgress = useRef(0);
+  
   const receivedChunksRef = useRef<ArrayBuffer[]>([]);
   const receivedBytesRef = useRef<number>(0);
   const fileMetadataRef = useRef<{
     name: string;
     size: number;
     type: string;
+    sha256: string;
   } | null>(null);
+  const isCanceledRef = useRef(false);
 
-  const iceServersPromiseRef = useRef<Promise<
-    import("@/lib/utils").IceServer[]
-  > | null>(null);
-  const candidateQueueRef = useRef<RTCIceCandidate[]>([]);
+  const strategyManagerRef = useRef(new DownloadStrategyManager());
 
   useEffect(() => {
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
+      disconnectWs();
+      cleanupWebRTC();
     };
-  }, []);
+  }, [disconnectWs, cleanupWebRTC]);
 
-  function handlePasswordSubmit(password: string) {
+  async function handlePasswordSubmit(password: string) {
     if (!room_id) return;
 
     // Reset everything for a fresh attempt
-    if (wsRef.current) wsRef.current.close();
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-      peerConnectionRef.current = null;
+    disconnectWs();
+    cleanupWebRTC();
+    cancelTransferLogic();
+    if (candidateQueueRef) {
+        candidateQueueRef.current = [];
     }
-    candidateQueueRef.current = [];
     receivedChunksRef.current = [];
     receivedBytesRef.current = 0;
-    setProgress(0);
     setDownloadUrl(null);
     setError(null);
+    isCanceledRef.current = false;
 
     const toastId = toast.loading("Connecting to room...");
 
-    // Start fetching ICE servers immediately when we start connecting
-    iceServersPromiseRef.current = fetchIceServers();
-
-    // Create the WebSocket connection
-    const ws = new WebSocket(`${WS_BASE_URL}/ws`);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      console.log("Connected to WebSocket");
+    try {
+      const ws = await connectWs(`${WS_BASE_URL}/ws`);
+      
       const msg: ClientMessage = {
         type: ClientMessageType.JoinRoom,
         room_id,
         password: password || undefined,
       };
       ws.send(JSON.stringify(msg));
-    };
 
-    ws.onmessage = async (event) => {
-      try {
-        const message: ServerMessage = JSON.parse(event.data);
-        console.log("WebSocket message received:", message);
+      ws.onmessage = async (event) => {
+        try {
+          const message: ServerMessage = JSON.parse(event.data);
+          console.log("WebSocket message received:", message);
 
-        const context: DownloadHandlerContext = {
-          setCurrentView,
-          setError,
-          setProgress,
-          setDownloadUrl,
-          setFileName,
-          toast,
-          toastId,
-          wsRef,
-          peerConnectionRef,
-          iceServersPromiseRef,
-          candidateQueueRef,
-          receivedChunksRef,
-          receivedBytesRef,
-          fileMetadataRef,
-          lastReportedProgress,
-        };
+          const context: DownloadHandlerContext = {
+            setCurrentView,
+            setError,
+            setDownloadUrl,
+            setFileName,
+            toast,
+            toastId,
+            wsRef,
+            peerConnectionRef,
+            createConnection,
+            candidateQueueRef,
+            receivedChunksRef,
+            receivedBytesRef,
+            fileMetadataRef,
+            initTransfer,
+            updateTransfer,
+            cancelTransfer: cancelTransferLogic,
+            isCanceledRef
+          };
 
-        const strategyManager = new DownloadWebSocketStrategyManager();
-        await strategyManager.handleMessage(message, context);
-      } catch (e) {
-        console.error("Failed to parse message:", e);
-        toast.dismiss(toastId);
-        toast.error("An unexpected error occurred.");
-        setError("An unexpected error occurred.");
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error("WebSocket error:", error);
+          await strategyManagerRef.current.handleMessage(message, context);
+        } catch (e) {
+          console.error("Failed to parse message:", e);
+          toast.dismiss(toastId);
+          toast.error("An unexpected error occurred.");
+          setError("An unexpected error occurred.");
+        }
+      };
+    } catch (error) {
       toast.dismiss(toastId);
       toast.error("Failed to connect to the server.");
       setError("Failed to connect to the server.");
-    };
-
-    ws.onclose = () => {
-      console.log("WebSocket connection closed");
-      if (wsRef.current === ws) {
-        wsRef.current = null;
-      }
-    };
+    }
   }
 
   if (isValidating) {
@@ -192,7 +174,7 @@ const Download = () => {
         <div className="w-full max-w-4xl mx-auto">
           {currentView === ViewType.DOWNLOAD && (
             <FileDownload
-              progress={progress}
+              progress={stats?.percent || 0}
               fileName={fileName}
               downloadUrl={downloadUrl}
             />

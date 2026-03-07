@@ -37,14 +37,15 @@ export type ServerMessage =
   | { type: ServerMessageType.Signal; data: JSON }
   | { type: ServerMessageType.Error; message: string }
   | {
-      type: ServerMessageType.RoomExists;
-      exists: boolean;
-      has_password: boolean;
-    };
+    type: ServerMessageType.RoomExists;
+    exists: boolean;
+    has_password: boolean;
+  };
 
 export enum SignalLabelType {
   Offer = "offer",
   Answer = "answer",
   Candidate = "candidate",
   Progress = "progress",
+  Cancel = "cancel",
 }

@@ -3,20 +3,23 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
-import Download from "./pages/Download";
+import { lazy, Suspense } from "react";
 
+const Download = lazy(() => import("./pages/Download"));
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <Toaster />
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Index />} />
-        <Route path="/download/:room_id" element={<Download />} />
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
+        <Routes>
+          <Route path="/" element={<Index />} />
+          <Route path="/download/:room_id" element={<Download />} />
 
-        <Route path="*" element={<NotFound />} />
-      </Routes>
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   </QueryClientProvider>
 );
