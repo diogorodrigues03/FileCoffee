@@ -25,9 +25,15 @@ impl Default for InMemoryRoomStore {
 
 #[async_trait]
 impl RoomStore for InMemoryRoomStore {
-    async fn insert(&self, room: Room) {
+    async fn insert_if_absent(&self, room: Room) -> bool {
         let mut rooms = self.rooms.write().await;
-        rooms.insert(room.id().to_string(), room);
+        match rooms.entry(room.id().to_string()) {
+            std::collections::hash_map::Entry::Occupied(_) => false,
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(room);
+                true
+            }
+        }
     }
 
     async fn get(&self, id: &str) -> Option<Room> {

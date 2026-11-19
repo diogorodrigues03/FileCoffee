@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Messages sent FROM client TO server
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -14,6 +15,11 @@ pub enum ClientMessage {
     Signal {
         data: serde_json::Value,
     },
+    /// Sent by the room owner to refuse a peer that joined. The peer is removed
+    /// from the room and its connection is closed.
+    RejectPeer {
+        peer_id: Uuid,
+    },
     Ping, // Add Ping/Pong for heartbeat in the future
 }
 
@@ -23,7 +29,9 @@ pub enum ClientMessage {
 pub enum ServerMessage {
     RoomCreated { room_id: String },
     RoomJoined,
-    PeerJoined { peer_count: usize }, // we are letting the client know how many peers are connected
+    /// Sent to existing peers when someone joins. The owner uses `peer_id` to
+    /// approve (start the transfer) or reject (send `RejectPeer`) the newcomer.
+    PeerJoined { peer_id: Uuid, peer_count: usize },
     PeerLeft { peer_count: usize },
     Signal { data: serde_json::Value },
     Error { code: String, message: String },
@@ -39,4 +47,7 @@ pub mod error_codes {
     pub const NOT_IN_ROOM: &str = "NOT_IN_ROOM";
     pub const INVALID_MESSAGE: &str = "INVALID_MESSAGE";
     pub const RATE_LIMITED: &str = "RATE_LIMITED";
+    pub const REJECTED: &str = "REJECTED";
+    pub const FORBIDDEN: &str = "FORBIDDEN";
+    pub const INTERNAL_ERROR: &str = "INTERNAL_ERROR";
 }

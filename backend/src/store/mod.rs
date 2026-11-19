@@ -8,8 +8,9 @@ use std::time::Duration;
 /// Implementations can use memory, Redis, PostgreSQL, etc.
 #[async_trait]
 pub trait RoomStore: Send + Sync {
-    /// Insert a new room
-    async fn insert(&self, room: Room);
+    /// Insert a room only if no room with the same ID exists.
+    /// Returns `false` (and leaves the store unchanged) on collision.
+    async fn insert_if_absent(&self, room: Room) -> bool;
 
     /// Get a room by ID
     async fn get(&self, id: &str) -> Option<Room>;

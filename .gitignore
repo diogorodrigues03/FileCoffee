@@ -23,6 +23,7 @@ Thumbs.db
 # Ignore AI-instructions files
 **/copilot-instructions.md
 **/GEMINI.md
+PLAN.md
 
 # Ignore .idea files and folders
 **/.idea/
