@@ -56,6 +56,22 @@ impl SignalingService {
         ice_servers_for_peer(&self.config, peer_id)
     }
 
+    /// Send an error to every peer in a room that is being shut down, then
+    /// close their connections.
+    pub async fn close_room_with_error(&self, room: &Room, code: &str, message: &str) {
+        let msg = ServerMessage::Error {
+            code: code.to_string(),
+            message: message.to_string(),
+        };
+        let msg_text = serde_json::to_string(&msg).unwrap_or_default();
+
+        let peers = room.peers().read().await;
+        for peer in peers.values() {
+            let _ = peer.sender.send(Message::text(msg_text.clone()));
+            let _ = peer.sender.send(Message::close());
+        }
+    }
+
     /// Notify all remaining peers that someone left.
     pub async fn broadcast_peer_left(&self, room: &Room, peer_count: usize) {
         let msg = ServerMessage::PeerLeft { peer_count };

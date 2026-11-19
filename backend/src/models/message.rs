@@ -59,4 +59,7 @@ pub mod error_codes {
     pub const REJECTED: &str = "REJECTED";
     pub const FORBIDDEN: &str = "FORBIDDEN";
     pub const INTERNAL_ERROR: &str = "INTERNAL_ERROR";
+    pub const TOO_MANY_ATTEMPTS: &str = "TOO_MANY_ATTEMPTS";
+    pub const PASSWORD_TOO_LONG: &str = "PASSWORD_TOO_LONG";
+    pub const SERVER_BUSY: &str = "SERVER_BUSY";
 }

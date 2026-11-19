@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc;
@@ -42,6 +43,8 @@ pub struct Room {
     created_at: Instant,
     /// Last activity timestamp, for TTL calculations
     last_activity: Arc<RwLock<Instant>>,
+    /// Wrong password attempts so far (shared by all clones of this room)
+    failed_password_attempts: Arc<AtomicU32>,
 }
 
 impl Room {
@@ -59,6 +62,7 @@ impl Room {
             peers: Arc::new(RwLock::new(peers)),
             created_at: now,
             last_activity: Arc::new(RwLock::new(now)),
+            failed_password_attempts: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -84,6 +88,10 @@ impl Room {
 
     pub fn peers(&self) -> &Arc<RwLock<HashMap<Uuid, Peer>>> {
         &self.peers
+    }
+
+    pub fn failed_password_attempts(&self) -> &AtomicU32 {
+        &self.failed_password_attempts
     }
 
     pub fn last_activity(&self) -> &Arc<RwLock<Instant>> {

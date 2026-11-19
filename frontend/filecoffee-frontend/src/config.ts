@@ -1,4 +1,9 @@
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+// In dev the Vite server (port 8080) doesn't proxy /api, so default to the
+// backend directly, matching WS_BASE_URL below. In production the API is
+// expected on the same origin.
+export const API_BASE_URL =
+    import.meta.env.VITE_API_BASE_URL ||
+    (import.meta.env.DEV ? "http://localhost:3030" : "");
 
 const getWsBaseUrl = () => {
     if (import.meta.env.VITE_WS_BASE_URL) {

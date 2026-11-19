@@ -5,6 +5,7 @@ import {
     DATA_CHANNEL_LABEL,
     SignalLabelType,
     ClientMessageType,
+    ErrorCode,
 } from "@/constants/enums";
 import { calculateSHA256, IceServer } from "@/lib/utils";
 import { BaseStrategy, StrategyManager } from "./base";
@@ -280,6 +281,17 @@ class ErrorStrategy extends BaseStrategy<UploadHandlerContext> {
 
         context.toast.dismiss(context.toastId);
         console.error("Server error:", message.message);
+
+        if (message.code === ErrorCode.TooManyAttempts) {
+            // The server closed the room because someone kept guessing the
+            // password. The link is dead; let the sender start over.
+            context.toast.dismiss(APPROVAL_TOAST_ID);
+            context.toast.error(message.message, { duration: Infinity });
+            context.setShareUrls(null);
+            context.setCurrentView(ViewType.PASSWORD);
+            return;
+        }
+
         context.toast.error(message.message);
     }
 }

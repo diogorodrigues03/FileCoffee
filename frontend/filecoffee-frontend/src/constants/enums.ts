@@ -2,6 +2,21 @@ import type { IceServer } from "@/lib/utils";
 
 export const DATA_CHANNEL_LABEL = "fileTransfer";
 
+// Must not exceed the backend's PASSWORD_MAX_LEN (default 256).
+export const PASSWORD_MAX_LENGTH = 256;
+
+// Error codes sent by the backend (backend/src/models/message.rs `error_codes`)
+export const ErrorCode = {
+  RoomNotFound: "ROOM_NOT_FOUND",
+  InvalidPassword: "INVALID_PASSWORD",
+  RoomFull: "ROOM_FULL",
+  Rejected: "REJECTED",
+  TooManyAttempts: "TOO_MANY_ATTEMPTS",
+  PasswordTooLong: "PASSWORD_TOO_LONG",
+  RateLimited: "RATE_LIMITED",
+  ServerBusy: "SERVER_BUSY",
+} as const;
+
 export enum ViewType {
   UPLOAD,
   DOWNLOAD,

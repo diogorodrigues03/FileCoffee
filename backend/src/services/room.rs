@@ -6,7 +6,9 @@ use crate::store::RoomStore;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHasher};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 /// Service for room management operations.
@@ -14,11 +16,19 @@ use uuid::Uuid;
 pub struct RoomService {
     store: Arc<dyn RoomStore + Send + Sync>,
     config: Arc<Config>,
+    /// Bounds concurrent Argon2 work so password traffic can't exhaust CPU or
+    /// memory (each operation uses ~19 MiB).
+    argon2_permits: Arc<Semaphore>,
 }
 
 impl RoomService {
     pub fn new(store: Arc<dyn RoomStore + Send + Sync>, config: Arc<Config>) -> Self {
-        Self { store, config }
+        let argon2_permits = Arc::new(Semaphore::new(config.argon2_max_concurrent));
+        Self {
+            store,
+            config,
+            argon2_permits,
+        }
     }
 
     /// Create a new room with an optional password, adding the creator as its
@@ -28,9 +38,21 @@ impl RoomService {
         password: Option<String>,
         owner_sender: PeerSender,
     ) -> Result<(String, Uuid), AppError> {
+        // Global backstop against memory exhaustion from many clients.
+        // (Approximate under concurrency, which is fine for a safety cap.)
+        if self.store.count().await >= self.config.max_rooms {
+            tracing::warn!(max_rooms = self.config.max_rooms, "Room limit reached");
+            return Err(AppError::TooManyRooms);
+        }
+
         // Hash password if provided
         let password_hash = match password {
-            Some(pwd) if !pwd.is_empty() => Some(self.hash_password(&pwd)?),
+            Some(pwd) if !pwd.is_empty() => {
+                if pwd.len() > self.config.password_max_len {
+                    return Err(AppError::PasswordTooLong(self.config.password_max_len));
+                }
+                Some(self.hash_password(pwd).await?)
+            }
             _ => None,
         };
         let has_password = password_hash.is_some();
@@ -54,29 +76,88 @@ impl RoomService {
         ))
     }
 
-    /// Hash a password using Argon2.
-    fn hash_password(&self, password: &str) -> Result<String, AppError> {
-        let salt = SaltString::generate(&mut rand::rngs::OsRng);
-        let argon2 = Argon2::default();
+    /// Run a CPU-heavy Argon2 operation on the blocking thread pool, limited to
+    /// `argon2_max_concurrent` at a time, so it never stalls the async runtime.
+    async fn run_argon2<T, F>(&self, work: F) -> Result<T, AppError>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        let _permit = self
+            .argon2_permits
+            .acquire()
+            .await
+            .map_err(|_| AppError::InternalError("Argon2 limiter closed".to_string()))?;
+        tokio::task::spawn_blocking(work)
+            .await
+            .map_err(|_| AppError::InternalError("Argon2 task failed".to_string()))
+    }
 
-        argon2
-            .hash_password(password.as_bytes(), &salt)
-            .map(|hash| hash.to_string())
-            .map_err(|_| AppError::InternalError("Password hashing failed".to_string()))
+    /// Hash a password using Argon2.
+    async fn hash_password(&self, password: String) -> Result<String, AppError> {
+        self.run_argon2(move || {
+            let salt = SaltString::generate(&mut rand::rngs::OsRng);
+            Argon2::default()
+                .hash_password(password.as_bytes(), &salt)
+                .map(|hash| hash.to_string())
+                .map_err(|_| AppError::InternalError("Password hashing failed".to_string()))
+        })
+        .await?
     }
 
     /// Verify a password against a hash.
-    fn verify_password(&self, password: &str, hash: &str) -> bool {
-        use argon2::{Argon2, PasswordHash, PasswordVerifier};
+    async fn verify_password(&self, password: String, hash: String) -> Result<bool, AppError> {
+        self.run_argon2(move || {
+            use argon2::{PasswordHash, PasswordVerifier};
+            match PasswordHash::new(&hash) {
+                Ok(parsed) => Argon2::default()
+                    .verify_password(password.as_bytes(), &parsed)
+                    .is_ok(),
+                Err(_) => false,
+            }
+        })
+        .await
+    }
 
-        let parsed_hash = match PasswordHash::new(hash) {
-            Ok(h) => h,
-            Err(_) => return false,
-        };
+    /// Check a join attempt's password. Each non-empty attempt reserves one of
+    /// the room's `room_max_password_attempts` slots *before* running Argon2,
+    /// so concurrent guesses can't exceed the limit; a correct password gives
+    /// its slot back.
+    async fn check_room_password(
+        &self,
+        room: &Room,
+        hash: &str,
+        password: Option<String>,
+    ) -> Result<(), AppError> {
+        let provided = password.unwrap_or_default();
 
-        Argon2::default()
-            .verify_password(password.as_bytes(), &parsed_hash)
-            .is_ok()
+        // Cheap rejections that can never be the right password: no Argon2,
+        // and they don't use up an attempt.
+        if provided.is_empty() {
+            return Err(AppError::InvalidPassword);
+        }
+        if provided.len() > self.config.password_max_len {
+            return Err(AppError::InvalidPassword);
+        }
+
+        let max = self.config.room_max_password_attempts;
+        let attempt = room.failed_password_attempts().fetch_add(1, Ordering::SeqCst);
+        if attempt >= max {
+            // Limit already reached; the room is being closed.
+            return Err(AppError::RoomNotFound(room.id().to_string()));
+        }
+
+        if self.verify_password(provided, hash.to_string()).await? {
+            room.failed_password_attempts().fetch_sub(1, Ordering::SeqCst);
+            return Ok(());
+        }
+
+        tracing::warn!(attempt = attempt + 1, max, "Invalid password attempt");
+        if attempt + 1 >= max {
+            Err(AppError::TooManyPasswordAttempts)
+        } else {
+            Err(AppError::InvalidPassword)
+        }
     }
 
     /// Join an existing room. Validates password and room capacity.
@@ -98,11 +179,7 @@ impl RoomService {
 
         // Validate password if the room has one
         if let Some(hash) = room.password_hash() {
-            let provided = password.unwrap_or_default();
-            if !self.verify_password(&provided, hash) {
-                tracing::warn!(room_id = %room_id, "Invalid password attempt");
-                return Err(AppError::InvalidPassword);
-            }
+            self.check_room_password(&room, hash, password).await?;
         }
 
         // Check room capacity
@@ -201,6 +278,15 @@ impl RoomService {
             .map(|room| (true, room.has_password()))
     }
 
+    /// Remove a room immediately (e.g. after too many wrong passwords) and
+    /// return it so the caller can notify the peers that were in it.
+    pub async fn close_room(&self, room_id: &str) -> Option<Room> {
+        let room = self.store.get(room_id).await?;
+        self.store.remove(room_id).await;
+        tracing::warn!("Room closed after too many wrong password attempts");
+        Some(room)
+    }
+
     /// Clean up stale rooms (called periodically).
     pub async fn cleanup_stale_rooms(&self, max_age: Duration) {
         let stale_room_ids = self.store.get_stale_room_ids(max_age).await;
@@ -224,10 +310,13 @@ mod tests {
     use tokio::sync::mpsc;
 
     fn service() -> RoomService {
-        RoomService::new(
-            Arc::new(InMemoryRoomStore::new()),
-            Arc::new(Config::from_env()),
-        )
+        service_with(|_| {})
+    }
+
+    fn service_with(tweak: impl FnOnce(&mut Config)) -> RoomService {
+        let mut config = Config::from_env();
+        tweak(&mut config);
+        RoomService::new(Arc::new(InMemoryRoomStore::new()), Arc::new(config))
     }
 
     fn sender() -> PeerSender {
@@ -295,5 +384,99 @@ mod tests {
             .join_room(&room_id, Some("secret".into()), sender())
             .await
             .is_ok());
+    }
+
+    async fn locked_room(max: u32) -> (RoomService, String) {
+        let svc = service_with(|c| {
+            c.room_max_password_attempts = max;
+            c.room_max_peers = 10;
+        });
+        let (room_id, _) = svc
+            .create_room(Some("correct horse".into()), sender())
+            .await
+            .unwrap();
+        (svc, room_id)
+    }
+
+    #[tokio::test]
+    async fn wrong_passwords_close_room_after_limit() {
+        let (svc, room_id) = locked_room(3).await;
+        for _ in 0..2 {
+            assert!(matches!(
+                svc.join_room(&room_id, Some("guess".into()), sender()).await,
+                Err(AppError::InvalidPassword)
+            ));
+        }
+        assert!(matches!(
+            svc.join_room(&room_id, Some("guess".into()), sender()).await,
+            Err(AppError::TooManyPasswordAttempts)
+        ));
+        // Even the right password no longer works once the limit is hit
+        assert!(matches!(
+            svc.join_room(&room_id, Some("correct horse".into()), sender()).await,
+            Err(AppError::RoomNotFound(_))
+        ));
+        assert!(svc.close_room(&room_id).await.is_some());
+        assert!(svc.get_room_info(&room_id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn correct_and_empty_passwords_do_not_use_attempts() {
+        let (svc, room_id) = locked_room(2).await;
+        for _ in 0..5 {
+            assert!(svc.join_room(&room_id, None, sender()).await.is_err());
+            assert!(svc.join_room(&room_id, Some(String::new()), sender()).await.is_err());
+            assert!(svc.join_room(&room_id, Some("correct horse".into()), sender()).await.is_ok());
+        }
+        // Still one wrong guess allowed before the limit
+        assert!(matches!(
+            svc.join_room(&room_id, Some("guess".into()), sender()).await,
+            Err(AppError::InvalidPassword)
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_guesses_cannot_exceed_limit() {
+        let (svc, room_id) = locked_room(5).await;
+        let svc = Arc::new(svc);
+        let handles: Vec<_> = (0..20)
+            .map(|i| {
+                let svc = svc.clone();
+                let room_id = room_id.clone();
+                tokio::spawn(async move {
+                    svc.join_room(&room_id, Some(format!("guess{i}")), sender()).await
+                })
+            })
+            .collect();
+
+        let (mut invalid, mut too_many, mut gone) = (0, 0, 0);
+        for h in handles {
+            match h.await.unwrap() {
+                Err(AppError::InvalidPassword) => invalid += 1,
+                Err(AppError::TooManyPasswordAttempts) => too_many += 1,
+                Err(AppError::RoomNotFound(_)) => gone += 1,
+                other => panic!("unexpected result: {:?}", other.map(|_| ())),
+            }
+        }
+        // Exactly 5 guesses were actually checked
+        assert_eq!((invalid, too_many, gone), (4, 1, 15));
+    }
+
+    #[tokio::test]
+    async fn overlong_passwords_rejected() {
+        let svc = service_with(|c| c.password_max_len = 16);
+        assert!(matches!(
+            svc.create_room(Some("x".repeat(17)), sender()).await,
+            Err(AppError::PasswordTooLong(16))
+        ));
+        let (room_id, _) = svc.create_room(Some("x".repeat(16)), sender()).await.unwrap();
+        // Too-long guesses are rejected without using an attempt or running Argon2
+        for _ in 0..10 {
+            assert!(matches!(
+                svc.join_room(&room_id, Some("y".repeat(10_000)), sender()).await,
+                Err(AppError::InvalidPassword)
+            ));
+        }
+        assert!(svc.join_room(&room_id, Some("x".repeat(16)), sender()).await.is_ok());
     }
 }

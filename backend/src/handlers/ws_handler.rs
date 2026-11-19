@@ -76,6 +76,12 @@ async fn handle_create_room(
 
             send_message(peer_tx, ServerMessage::RoomCreated { room_id });
         }
+        Err(e @ crate::error::AppError::TooManyRooms) => {
+            send_error(peer_tx, error_codes::SERVER_BUSY, &e.to_string());
+        }
+        Err(e @ crate::error::AppError::PasswordTooLong(_)) => {
+            send_error(peer_tx, error_codes::PASSWORD_TOO_LONG, &e.to_string());
+        }
         Err(e) => {
             tracing::error!(error = %e, "Failed to create room");
             send_error(peer_tx, error_codes::INTERNAL_ERROR, "Failed to create room");
@@ -120,6 +126,19 @@ async fn handle_join_room(
                     ice_servers: signaling_service.ice_servers_for(peer_id),
                 },
             );
+        }
+        Err(crate::error::AppError::TooManyPasswordAttempts) => {
+            // Close the room and tell everyone in it (the sender) why.
+            if let Some(room) = room_service.close_room(&room_id).await {
+                signaling_service
+                    .close_room_with_error(
+                        &room,
+                        error_codes::TOO_MANY_ATTEMPTS,
+                        "Someone entered the wrong password too many times, so this room was closed. Share a new link.",
+                    )
+                    .await;
+            }
+            send_error(peer_tx, error_codes::TOO_MANY_ATTEMPTS, "Too many wrong password attempts");
         }
         Err(e) => {
             let code = match &e {

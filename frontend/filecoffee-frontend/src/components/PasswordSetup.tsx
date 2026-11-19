@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { PASSWORD_MAX_LENGTH } from "@/constants/enums";
 import { Lock, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,6 +56,7 @@ export const PasswordSetup = ({
             placeholder="Enter a password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            maxLength={PASSWORD_MAX_LENGTH}
             className="bg-background border-border focus:border-accent transition-smooth"
           />
           <p className="text-xs text-muted-foreground">
