@@ -31,7 +31,10 @@ impl SignalingService {
 
     /// Notify all peers that someone joined.
     pub async fn broadcast_peer_joined(&self, room: &Room, new_peer_id: Uuid, peer_count: usize) {
-        let msg = ServerMessage::PeerJoined { peer_count };
+        let msg = ServerMessage::PeerJoined {
+            peer_id: new_peer_id,
+            peer_count,
+        };
         let msg_text = serde_json::to_string(&msg).unwrap_or_default();
 
         let peers = room.peers().read().await;

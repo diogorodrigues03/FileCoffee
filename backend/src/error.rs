@@ -18,6 +18,12 @@ pub enum AppError {
     #[error("Not in a room")]
     NotInRoom,
 
+    #[error("Only the room owner can do that")]
+    Forbidden,
+
+    #[error("Peer not found")]
+    PeerNotFound,
+
     #[error("Internal error: {0}")]
     InternalError(String),
 }
@@ -35,6 +41,8 @@ impl AppError {
             AppError::RoomCapacityExceeded => StatusCode::CONFLICT,
             AppError::RateLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             AppError::NotInRoom => StatusCode::BAD_REQUEST,
+            AppError::Forbidden => StatusCode::FORBIDDEN,
+            AppError::PeerNotFound => StatusCode::NOT_FOUND,
             AppError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

@@ -12,12 +12,14 @@ export enum ClientMessageType {
   CreateRoom = "CreateRoom",
   JoinRoom = "JoinRoom",
   Signal = "Signal",
+  RejectPeer = "RejectPeer",
 }
 
 export type ClientMessage =
   | { type: ClientMessageType.CreateRoom; password?: string }
   | { type: ClientMessageType.JoinRoom; room_id: string; password?: string }
-  | { type: ClientMessageType.Signal; data: JSON };
+  | { type: ClientMessageType.Signal; data: JSON }
+  | { type: ClientMessageType.RejectPeer; peer_id: string };
 
 export enum ServerMessageType {
   RoomCreated = "RoomCreated",
@@ -32,10 +34,10 @@ export enum ServerMessageType {
 export type ServerMessage =
   | { type: ServerMessageType.RoomCreated; room_id: string }
   | { type: ServerMessageType.RoomJoined }
-  | { type: ServerMessageType.PeerJoined }
+  | { type: ServerMessageType.PeerJoined; peer_id: string; peer_count: number }
   | { type: ServerMessageType.PeerLeft }
   | { type: ServerMessageType.Signal; data: JSON }
-  | { type: ServerMessageType.Error; message: string }
+  | { type: ServerMessageType.Error; code: string; message: string }
   | {
     type: ServerMessageType.RoomExists;
     exists: boolean;

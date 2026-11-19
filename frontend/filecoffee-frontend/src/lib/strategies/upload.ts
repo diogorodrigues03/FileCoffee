@@ -46,8 +46,12 @@ class RoomCreatedStrategy extends BaseStrategy<UploadHandlerContext> {
     }
 }
 
+// Only one receiver can be in the room at a time, so a single toast id is enough.
+const APPROVAL_TOAST_ID = "peer-approval";
+
 class PeerLeftStrategy extends BaseStrategy<UploadHandlerContext> {
     handle(message: ServerMessage, context: UploadHandlerContext) {
+        context.toast.dismiss(APPROVAL_TOAST_ID);
         context.toast.info("Peer disconnected.");
         context.setIsConnected(false);
         context.cancelTransfer();
@@ -64,9 +68,42 @@ class PeerLeftStrategy extends BaseStrategy<UploadHandlerContext> {
 }
 
 class PeerJoinedStrategy extends BaseStrategy<UploadHandlerContext> {
-    async handle(message: ServerMessage, context: UploadHandlerContext) {
-        console.log("Peer joined! Starting WebRTC connection...");
-        context.toast.info("A peer has joined! connecting...");
+    handle(message: ServerMessage, context: UploadHandlerContext) {
+        if (message.type !== ServerMessageType.PeerJoined) return;
+        const { peer_id } = message;
+
+        // Nothing is sent until the sender explicitly approves the receiver.
+        context.toast("Someone opened your link", {
+            id: APPROVAL_TOAST_ID,
+            description: "Only send the file if you're expecting them.",
+            duration: Infinity,
+            action: {
+                label: "Send file",
+                onClick: () => {
+                    this.startTransfer(context).catch((error) => {
+                        console.error("Failed to start transfer:", error);
+                        context.toast.error("Failed to start the transfer.");
+                    });
+                },
+            },
+            cancel: {
+                label: "Reject",
+                onClick: () => {
+                    context.wsRef.current?.send(
+                        JSON.stringify({
+                            type: ClientMessageType.RejectPeer,
+                            peer_id,
+                        })
+                    );
+                    context.toast.info("Receiver rejected. Your link is still active.");
+                },
+            },
+        });
+    }
+
+    private async startTransfer(context: UploadHandlerContext) {
+        console.log("Peer approved! Starting WebRTC connection...");
+        context.toast.info("Receiver approved. Connecting...");
         context.setIsConnected(true);
         context.isCanceledRef.current = false;
 

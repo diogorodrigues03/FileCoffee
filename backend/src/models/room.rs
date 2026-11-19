@@ -34,6 +34,8 @@ pub struct Room {
     id: String,
     /// Optional password hash
     password_hash: Option<String>,
+    /// Peer that created the room (the sender). Only the owner may reject peers.
+    owner_id: Uuid,
     /// Connected peers, keyed by UUID to avoid index shifting issues
     peers: Arc<RwLock<HashMap<Uuid, Peer>>>,
     /// When the room was created
@@ -43,13 +45,18 @@ pub struct Room {
 }
 
 impl Room {
-    /// Create a new room. Password should already be hashed!
-    pub fn new(id: String, password_hash: Option<String>) -> Self {
+    /// Create a new room with `owner` as its first peer.
+    /// Password should already be hashed!
+    pub fn new(id: String, password_hash: Option<String>, owner: Peer) -> Self {
         let now = Instant::now();
+        let owner_id = owner.id;
+        let mut peers = HashMap::new();
+        peers.insert(owner_id, owner);
         Self {
             id,
             password_hash,
-            peers: Arc::new(RwLock::new(HashMap::new())),
+            owner_id,
+            peers: Arc::new(RwLock::new(peers)),
             created_at: now,
             last_activity: Arc::new(RwLock::new(now)),
         }
@@ -61,6 +68,10 @@ impl Room {
 
     pub fn password_hash(&self) -> Option<&str> {
         self.password_hash.as_deref()
+    }
+
+    pub fn owner_id(&self) -> Uuid {
+        self.owner_id
     }
 
     pub fn has_password(&self) -> bool {

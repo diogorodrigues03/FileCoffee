@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "--manifest-path", "backend/Cargo.toml"],
+      "port": 3030
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend/filecoffee-frontend", "run", "dev"],
+      "port": 8080
+    }
+  ]
+}

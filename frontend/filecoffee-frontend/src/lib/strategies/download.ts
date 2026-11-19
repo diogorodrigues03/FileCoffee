@@ -39,7 +39,10 @@ class RoomJoinedStrategy extends BaseStrategy<DownloadHandlerContext> {
         if (message.type !== ServerMessageType.RoomJoined) return;
 
         context.toast.dismiss(context.toastId);
-        context.toast.success("Joined room successfully!");
+        context.toast.info("Connected. Waiting for the sender to accept...", {
+            duration: Infinity,
+            id: "awaiting-approval",
+        });
         context.setCurrentView(ViewType.DOWNLOAD);
     }
 }
@@ -63,6 +66,7 @@ class SignalStrategy extends BaseStrategy<DownloadHandlerContext> {
         const signal = message.data as any;
 
         if (signal.type === SignalLabelType.Offer) {
+            context.toast.dismiss("awaiting-approval");
             context.isCanceledRef.current = false;
             await this.handleOffer(signal, context);
         } else if (signal.type === SignalLabelType.Candidate) {
@@ -230,6 +234,7 @@ class ErrorStrategy extends BaseStrategy<DownloadHandlerContext> {
         if (message.type !== ServerMessageType.Error) return;
 
         context.toast.dismiss(context.toastId);
+        context.toast.dismiss("awaiting-approval");
         context.toast.error(message.message);
         context.setError(message.message);
     }
