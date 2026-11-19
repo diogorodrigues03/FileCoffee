@@ -61,14 +61,24 @@ async fn main() {
 
     // Spawn room cleanup task
     let cleanup_room_service = room_service.clone();
+    let cleanup_signaling = signaling_service.clone();
     let cleanup_config = config.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         loop {
             interval.tick().await;
-            cleanup_room_service
+            let expired = cleanup_room_service
                 .cleanup_stale_rooms(cleanup_config.room_ttl())
                 .await;
+            for room in expired {
+                cleanup_signaling
+                    .close_room_with_error(
+                        &room,
+                        error_codes::ROOM_EXPIRED,
+                        "Nobody opened your link for a while, so it expired. Start again to get a new one.",
+                    )
+                    .await;
+            }
         }
     });
 

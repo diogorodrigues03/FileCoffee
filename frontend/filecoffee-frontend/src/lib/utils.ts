@@ -31,16 +31,6 @@ export function getFileSize(file: { size: number }): string {
     }
 }
 
-export async function calculateSHA256(data: File | Blob): Promise<string> {
-    const buffer = await data.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hashHex = hashArray
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-    return hashHex;
-}
-
 export function updateStats(stats: TransferStats, newBytes: number, totalSize: number): TransferStats {
     const now = Date.now();
     const elapsedMs = now - stats.lastUpdate;

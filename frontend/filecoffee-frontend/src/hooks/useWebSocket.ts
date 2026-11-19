@@ -1,48 +1,55 @@
 import { useState, useCallback, useRef } from "react";
 
+/**
+ * One signaling WebSocket.
+ *
+ * There is deliberately no auto-reconnect: room membership lives on the
+ * server and is dropped with the socket (the sender's room is deleted once
+ * it's empty), so a fresh socket would be in no room and the share link would
+ * silently stop working. Instead `onUnexpectedClose` fires for any close we
+ * didn't ask for, and the page decides what to tell the user.
+ */
 export function useWebSocket() {
     const wsRef = useRef<WebSocket | null>(null);
     const [isConnected, setIsConnected] = useState(false);
-    const reconnectAttempt = useRef(0);
-    const maxRetries = 5;
 
-    const connect = useCallback((url: string) => {
-        return new Promise<WebSocket>((resolve, reject) => {
-            const ws = new WebSocket(url);
-            wsRef.current = ws;
+    const connect = useCallback(
+        (url: string, onUnexpectedClose?: (event: CloseEvent) => void) => {
+            return new Promise<WebSocket>((resolve, reject) => {
+                const ws = new WebSocket(url);
+                wsRef.current = ws;
+                let opened = false;
 
-            ws.onopen = () => {
-                setIsConnected(true);
-                reconnectAttempt.current = 0;
-                resolve(ws);
-            };
+                ws.onopen = () => {
+                    opened = true;
+                    setIsConnected(true);
+                    resolve(ws);
+                };
 
-            ws.onclose = () => {
-                setIsConnected(false);
-                if (reconnectAttempt.current < maxRetries) {
-                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempt.current), 30000);
-                    setTimeout(() => {
-                        reconnectAttempt.current++;
-                        connect(url).catch(() => { });
-                    }, delay);
-                }
-            };
+                ws.onerror = (err) => {
+                    console.error("WebSocket error:", err);
+                };
 
-            ws.onerror = (err) => {
-                console.error("WebSocket error:", err);
-                if (!isConnected) {
-                    reject(err);
-                }
-            };
-        });
-    }, [isConnected]);
+                ws.onclose = (event) => {
+                    if (!opened) {
+                        reject(new Error(`WebSocket closed before opening (code ${event.code})`));
+                    }
+                    // A socket we replaced or closed ourselves: nothing to report.
+                    if (wsRef.current !== ws) return;
+                    wsRef.current = null;
+                    setIsConnected(false);
+                    if (opened) onUnexpectedClose?.(event);
+                };
+            });
+        },
+        []
+    );
 
     const disconnect = useCallback(() => {
-        reconnectAttempt.current = maxRetries; // Prevent auto-reconnect
-        if (wsRef.current) {
-            wsRef.current.close();
-            wsRef.current = null;
-        }
+        const ws = wsRef.current;
+        // Clear first so onclose knows this close was intentional.
+        wsRef.current = null;
+        ws?.close();
         setIsConnected(false);
     }, []);
 

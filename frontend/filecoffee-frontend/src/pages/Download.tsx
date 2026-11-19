@@ -7,6 +7,7 @@ import {
   ClientMessage,
   ClientMessageType,
   ServerMessage,
+  ServerMessageType,
 } from "@/constants/enums";
 import { useParams } from "react-router-dom";
 import { useRoomValidation } from "@/hooks/useRoomValidation";
@@ -19,6 +20,7 @@ import {
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useWebRTC } from "@/hooks/useWebRTC";
 import { useFileTransfer } from "@/hooks/useFileTransfer";
+import { FileReceiver, IncomingFile } from "@/lib/transfer/receiver";
 
 const Download = () => {
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.PASSWORD);
@@ -39,25 +41,33 @@ const Download = () => {
 
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>("");
-  
-  const receivedChunksRef = useRef<ArrayBuffer[]>([]);
-  const receivedBytesRef = useRef<number>(0);
-  const fileMetadataRef = useRef<{
-    name: string;
-    size: number;
-    type: string;
-    sha256: string;
-  } | null>(null);
-  const isCanceledRef = useRef(false);
+  const [incomingFile, setIncomingFile] = useState<IncomingFile | null>(null);
+  const [savedToDisk, setSavedToDisk] = useState(false);
+  const receiverRef = useRef<FileReceiver | null>(null);
+  // The server sends an Error right before closing a socket on purpose
+  // (rejected, wrong password...); the error strategy reports those.
+  const lastMessageWasErrorRef = useRef(false);
 
   const strategyManagerRef = useRef(new DownloadStrategyManager());
 
   useEffect(() => {
     return () => {
+      receiverRef.current?.cancel();
       disconnectWs();
       cleanupWebRTC();
     };
   }, [disconnectWs, cleanupWebRTC]);
+
+  // Release the received file when it is replaced or the page goes away.
+  useEffect(() => {
+    if (!downloadUrl) return;
+    return () => URL.revokeObjectURL(downloadUrl);
+  }, [downloadUrl]);
+
+  async function handleSave() {
+    // Called straight from the click so the save picker gets user activation.
+    await receiverRef.current?.accept();
+  }
 
   async function handlePasswordSubmit(password: string) {
     if (!room_id) return;
@@ -69,16 +79,42 @@ const Download = () => {
     if (candidateQueueRef) {
         candidateQueueRef.current = [];
     }
-    receivedChunksRef.current = [];
-    receivedBytesRef.current = 0;
+    receiverRef.current?.cancel();
+    receiverRef.current = null;
+    setIncomingFile(null);
+    setSavedToDisk(false);
     setDownloadUrl(null);
     setError(null);
-    isCanceledRef.current = false;
 
     const toastId = toast.loading("Connecting to room...");
+    lastMessageWasErrorRef.current = false;
+
+    const handleConnectionLost = () => {
+      if (lastMessageWasErrorRef.current) return;
+      toast.dismiss(toastId);
+      toast.dismiss("awaiting-approval");
+
+      const state = receiverRef.current?.state;
+      if (state === "done") return; // Already have the file; nothing lost.
+      if (
+        (state === "offered" || state === "opening" || state === "receiving") &&
+        peerConnectionRef.current?.connectionState === "connected"
+      ) {
+        // The file comes peer-to-peer; the server isn't needed any more.
+        return;
+      }
+
+      receiverRef.current?.cancel();
+      receiverRef.current = null;
+      cleanupWebRTC();
+      cancelTransferLogic();
+      setIncomingFile(null);
+      setCurrentView(ViewType.PASSWORD);
+      toast.error("Lost connection to the server. Try again.");
+    };
 
     try {
-      const ws = await connectWs(`${WS_BASE_URL}/ws`);
+      const ws = await connectWs(`${WS_BASE_URL}/ws`, handleConnectionLost);
       
       const msg: ClientMessage = {
         type: ClientMessageType.JoinRoom,
@@ -91,6 +127,7 @@ const Download = () => {
         try {
           const message: ServerMessage = JSON.parse(event.data);
           console.log("WebSocket message received:", message);
+          lastMessageWasErrorRef.current = message.type === ServerMessageType.Error;
 
           const context: DownloadHandlerContext = {
             setCurrentView,
@@ -104,13 +141,12 @@ const Download = () => {
             createConnection,
             setIceServers,
             candidateQueueRef,
-            receivedChunksRef,
-            receivedBytesRef,
-            fileMetadataRef,
+            receiverRef,
+            setIncomingFile,
+            setSavedToDisk,
             initTransfer,
             updateTransfer,
             cancelTransfer: cancelTransferLogic,
-            isCanceledRef
           };
 
           await strategyManagerRef.current.handleMessage(message, context);
@@ -178,6 +214,9 @@ const Download = () => {
               progress={stats?.percent || 0}
               fileName={fileName}
               downloadUrl={downloadUrl}
+              incomingFile={incomingFile}
+              savedToDisk={savedToDisk}
+              onSave={handleSave}
             />
           )}
 

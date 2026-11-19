@@ -15,6 +15,7 @@ export const ErrorCode = {
   PasswordTooLong: "PASSWORD_TOO_LONG",
   RateLimited: "RATE_LIMITED",
   ServerBusy: "SERVER_BUSY",
+  RoomExpired: "ROOM_EXPIRED",
 } as const;
 
 export enum ViewType {
@@ -72,4 +73,19 @@ export enum SignalLabelType {
   Candidate = "candidate",
   Progress = "progress",
   Cancel = "cancel",
+}
+
+/**
+ * JSON control messages on the WebRTC data channel (browser to browser, the
+ * server never sees these). Binary messages on the channel are file chunks.
+ *
+ * sender → receiver: Metadata, then chunks, then Done (carries the SHA-256).
+ * receiver → sender: Ready (start streaming), Ack (bytes written to disk),
+ * Progress at 100% once verified. Either side may send Cancel.
+ */
+export enum TransferMessageType {
+  Metadata = "metadata",
+  Ready = "ready",
+  Ack = "ack",
+  Done = "done",
 }

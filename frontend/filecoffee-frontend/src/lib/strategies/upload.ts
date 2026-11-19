@@ -7,7 +7,8 @@ import {
     ClientMessageType,
     ErrorCode,
 } from "@/constants/enums";
-import { calculateSHA256, IceServer } from "@/lib/utils";
+import { IceServer } from "@/lib/utils";
+import { FileSender } from "@/lib/transfer/sender";
 import { BaseStrategy, StrategyManager } from "./base";
 
 export interface UploadHandlerContext {
@@ -49,7 +50,10 @@ class RoomCreatedStrategy extends BaseStrategy<UploadHandlerContext> {
 }
 
 // Only one receiver can be in the room at a time, so a single toast id is enough.
-const APPROVAL_TOAST_ID = "peer-approval";
+export const APPROVAL_TOAST_ID = "peer-approval";
+// Persistent "your link is dead" notices share one id, so a new one replaces
+// the old and starting again can clear it.
+export const LINK_LOST_TOAST_ID = "link-lost";
 
 class PeerLeftStrategy extends BaseStrategy<UploadHandlerContext> {
     handle(message: ServerMessage, context: UploadHandlerContext) {
@@ -159,98 +163,35 @@ class PeerJoinedStrategy extends BaseStrategy<UploadHandlerContext> {
         }
     }
 
-    private async setupDataChannel(dataChannel: RTCDataChannel, context: UploadHandlerContext) {
-        dataChannel.onopen = async () => {
+    private setupDataChannel(dataChannel: RTCDataChannel, context: UploadHandlerContext) {
+        const file = context.selectedFile;
+        if (!file) return;
+
+        const sender = new FileSender(dataChannel, file, {
+            onStart: (size) => {
+                context.toast.success("Receiver accepted. Sending...");
+                context.initTransfer(size);
+            },
+            onProgress: (bytes) => context.updateTransfer(bytes),
+            onComplete: () => {
+                context.toast.success("File transfer completed successfully!");
+                context.onTransferComplete?.();
+            },
+            onCanceledByPeer: () => {
+                context.toast.error("The receiver cancelled the transfer.");
+                context.isCanceledRef.current = true;
+                context.cancelTransfer();
+            },
+            onError: (message) => {
+                context.toast.error(message);
+                context.cancelTransfer();
+            },
+        });
+
+        dataChannel.onopen = () => {
             console.log("Data channel opened");
-            context.toast.success("Connected! Preparing file... (Computing SHA-256)");
-
-            if (!context.selectedFile) return;
-
-            const sha256 = await calculateSHA256(context.selectedFile);
-
-            context.toast.success("File verified! Sending...");
-            context.initTransfer(context.selectedFile.size);
-
-            // 1. Send metadata first
-            const metaData = JSON.stringify({
-                type: "metadata",
-                fileName: context.selectedFile.name,
-                fileSize: context.selectedFile.size,
-                fileType: context.selectedFile.type,
-                sha256: sha256,
-            });
-
-            dataChannel.send(metaData);
-
-            // 2. Read and Chunk the file
-            const CHUNK_SIZE = 256 * 1024;
-            const MAX_BUFFERED_AMOUNT = 64 * 1024 * 1024;
-
-            dataChannel.bufferedAmountLowThreshold = 0;
-
-            let offset = 0;
-            const fileReader = new FileReader();
-
-            fileReader.onload = (e) => {
-                if (context.isCanceledRef.current) return;
-
-                const buffer = e.target?.result as ArrayBuffer;
-                if (!buffer) return;
-
-                try {
-                    dataChannel.send(buffer);
-                    context.updateTransfer(buffer.byteLength);
-                    offset += buffer.byteLength;
-                    sendNextChunk();
-                } catch (error) {
-                    console.error("Error sending chunk:", error);
-                    context.toast.error("Error sending file data");
-                }
-            };
-
-            const sendNextChunk = () => {
-                if (context.isCanceledRef.current) return;
-
-                if (!context.selectedFile || offset >= context.selectedFile.size) {
-                    return;
-                }
-
-                // If the buffer is full, wait for it to drain
-                if (dataChannel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
-                    return;
-                }
-
-                const slice = context.selectedFile.slice(offset, offset + CHUNK_SIZE);
-                fileReader.readAsArrayBuffer(slice);
-            };
-
-            dataChannel.onbufferedamountlow = () => {
-                sendNextChunk();
-            };
-
-            sendNextChunk();
-        };
-
-        dataChannel.onmessage = (event) => {
-            try {
-                const msg = JSON.parse(event.data);
-                if (msg.type === SignalLabelType.Cancel) {
-                    context.toast.error("Peer cancelled the transfer.");
-                    context.isCanceledRef.current = true;
-                    context.cancelTransfer();
-                } else if (msg.type === SignalLabelType.Progress) {
-                    if (msg.percent === 100) {
-                        context.toast.success("File transfer completed successfully!");
-                        if (context.onTransferComplete) context.onTransferComplete();
-                    }
-                }
-            } catch (e) {
-                // Ignore binary data
-            }
-        };
-
-        dataChannel.onclose = () => {
-            console.log("Data channel closed");
+            context.toast.info("Connected. Waiting for the receiver to choose where to save...");
+            sender.offer();
         };
     }
 }
@@ -282,11 +223,12 @@ class ErrorStrategy extends BaseStrategy<UploadHandlerContext> {
         context.toast.dismiss(context.toastId);
         console.error("Server error:", message.message);
 
-        if (message.code === ErrorCode.TooManyAttempts) {
-            // The server closed the room because someone kept guessing the
-            // password. The link is dead; let the sender start over.
+        if (message.code === ErrorCode.TooManyAttempts || message.code === ErrorCode.RoomExpired) {
+            // The server closed the room (someone kept guessing the password,
+            // or nobody joined for too long). The link is dead; let the sender
+            // start over with the same file.
             context.toast.dismiss(APPROVAL_TOAST_ID);
-            context.toast.error(message.message, { duration: Infinity });
+            context.toast.error(message.message, { duration: Infinity, id: LINK_LOST_TOAST_ID });
             context.setShareUrls(null);
             context.setCurrentView(ViewType.PASSWORD);
             return;

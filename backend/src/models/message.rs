@@ -62,4 +62,5 @@ pub mod error_codes {
     pub const TOO_MANY_ATTEMPTS: &str = "TOO_MANY_ATTEMPTS";
     pub const PASSWORD_TOO_LONG: &str = "PASSWORD_TOO_LONG";
     pub const SERVER_BUSY: &str = "SERVER_BUSY";
+    pub const ROOM_EXPIRED: &str = "ROOM_EXPIRED";
 }

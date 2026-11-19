@@ -7,7 +7,7 @@ use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHasher};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
@@ -184,6 +184,10 @@ impl RoomService {
 
         // Check room capacity
         let mut peers = room.peers().write().await;
+        if room.is_closed() {
+            // Expired or closed after we fetched it.
+            return Err(AppError::RoomNotFound(room_id.to_string()));
+        }
         if peers.len() >= self.config.room_max_peers {
             tracing::warn!(room_id = %room_id, "Room capacity exceeded");
             return Err(AppError::RoomCapacityExceeded);
@@ -196,8 +200,7 @@ impl RoomService {
         let peer_count = peers.len();
         drop(peers);
 
-        // Update last activity
-        *room.last_activity().write().await = Instant::now();
+        room.touch().await;
 
         tracing::info!(room_id = %room_id, peer_id = %peer_id, peer_count, "Peer joined room");
 
@@ -221,6 +224,9 @@ impl RoomService {
             self.store.remove(room_id).await;
             tracing::info!(room_id = %room_id, "Room deleted (empty)");
         } else {
+            // Back to just the sender waiting: restart the idle clock so a room
+            // that just finished a long transfer isn't expired straight away.
+            room.touch().await;
             tracing::info!(room_id = %room_id, peer_id = %peer_id, remaining = remaining_count, "Peer left room");
         }
 
@@ -252,6 +258,7 @@ impl RoomService {
         let removed = room.peers().write().await.remove(&target_id);
         match removed {
             Some(peer) => {
+                room.touch().await;
                 tracing::info!(peer_id = %target_id, "Peer rejected by room owner");
                 Ok(peer.sender)
             }
@@ -282,19 +289,43 @@ impl RoomService {
     /// return it so the caller can notify the peers that were in it.
     pub async fn close_room(&self, room_id: &str) -> Option<Room> {
         let room = self.store.get(room_id).await?;
+        let peers = room.peers().write().await;
+        room.mark_closed();
         self.store.remove(room_id).await;
+        drop(peers);
         tracing::warn!("Room closed after too many wrong password attempts");
         Some(room)
     }
 
-    /// Clean up stale rooms (called periodically).
-    pub async fn cleanup_stale_rooms(&self, max_age: Duration) {
+    /// Remove rooms where the sender has waited longer than `max_age` with
+    /// nobody joining (called periodically). Rooms with a receiver in them are
+    /// never expired: once WebRTC is up, a transfer can run for hours without
+    /// any signaling. Returns the removed rooms so the caller can tell their
+    /// peers.
+    pub async fn cleanup_stale_rooms(&self, max_age: Duration) -> Vec<Room> {
         let stale_room_ids = self.store.get_stale_room_ids(max_age).await;
+        let mut expired = Vec::new();
 
         for room_id in stale_room_ids {
+            let Some(room) = self.store.get(&room_id).await else {
+                continue;
+            };
+            // Same lock order as join_room (peers, then last_activity), and
+            // re-checked under the lock so a join that just happened wins.
+            let peers = room.peers().write().await;
+            let idle = room.last_activity().read().await.elapsed();
+            if peers.len() > 1 || idle <= max_age {
+                continue;
+            }
+            room.mark_closed();
             self.store.remove(&room_id).await;
-            tracing::info!(room_id = %room_id, "Stale room cleaned up");
+            drop(peers);
+
+            tracing::info!(room_id = %room_id, "Idle room expired");
+            expired.push(room);
         }
+
+        expired
     }
 
     /// Get room for signaling operations.
@@ -321,6 +352,69 @@ mod tests {
 
     fn sender() -> PeerSender {
         mpsc::unbounded_channel().0
+    }
+
+    /// Pretend the room has been idle for `secs`.
+    async fn age_room(svc: &RoomService, room_id: &str, secs: u64) {
+        let room = svc.get_room(room_id).await.unwrap();
+        *room.last_activity().write().await = std::time::Instant::now() - Duration::from_secs(secs);
+    }
+
+    const TTL: Duration = Duration::from_secs(3600);
+
+    #[tokio::test]
+    async fn idle_waiting_room_expires() {
+        let svc = service();
+        let (room_id, _) = svc.create_room(None, sender()).await.unwrap();
+
+        age_room(&svc, &room_id, 60).await;
+        assert!(svc.cleanup_stale_rooms(TTL).await.is_empty());
+
+        age_room(&svc, &room_id, 3601).await;
+        let expired = svc.cleanup_stale_rooms(TTL).await;
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].id(), room_id);
+        assert!(svc.get_room(&room_id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn room_with_receiver_never_expires() {
+        let svc = service();
+        let (room_id, _) = svc.create_room(None, sender()).await.unwrap();
+        svc.join_room(&room_id, None, sender()).await.unwrap();
+
+        // A transfer can run for hours with no signaling at all.
+        age_room(&svc, &room_id, 10 * 3600).await;
+        assert!(svc.cleanup_stale_rooms(TTL).await.is_empty());
+        assert!(svc.get_room(&room_id).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn receiver_leaving_restarts_idle_clock() {
+        let svc = service();
+        let (room_id, _) = svc.create_room(None, sender()).await.unwrap();
+        let (guest, _) = svc.join_room(&room_id, None, sender()).await.unwrap();
+        age_room(&svc, &room_id, 10 * 3600).await;
+
+        svc.leave_room(&room_id, guest).await.unwrap();
+        assert!(svc.cleanup_stale_rooms(TTL).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cannot_join_room_closed_after_lookup() {
+        let svc = service();
+        let (room_id, _) = svc.create_room(None, sender()).await.unwrap();
+        // Simulate a join that fetched the room just before it was closed.
+        let room = svc.get_room(&room_id).await.unwrap();
+        age_room(&svc, &room_id, 3601).await;
+        assert_eq!(svc.cleanup_stale_rooms(TTL).await.len(), 1);
+        assert!(room.is_closed());
+        svc.store.insert_if_absent(room).await;
+
+        assert!(matches!(
+            svc.join_room(&room_id, None, sender()).await,
+            Err(AppError::RoomNotFound(_))
+        ));
     }
 
     #[tokio::test]
