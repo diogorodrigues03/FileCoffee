@@ -36,6 +36,7 @@ Full stack with Docker (backend + frontend + local coturn TURN server):
 docker-compose -f docker-compose.dev.yml up --build   # hot reload; frontend :8080, backend :3030
 docker-compose up --build                              # production images
 ```
+coturn in both compose files is hardened with `--denied-peer-ip` for all private/loopback/link-local/reserved ranges, so it cannot be used to reach the backend, other containers or the LAN. Keep those flags when editing the compose files. The coturn image's entrypoint always logs a harmless `CONFIG: Unknown argument:` line.
 
 ## Architecture
 
@@ -53,18 +54,18 @@ Flow:
 ### Backend layout (`backend/src`)
 
 - `main.rs` wires everything: `Config::from_env()` → `InMemoryRoomStore` → `RoomService` + `SignalingService` → warp routes, plus a background task that calls `cleanup_stale_rooms` every 60s.
-- `routes/` builds warp filters (`api.rs`: `/api/rooms/:id`, `/api/ice-servers`, `/health`; `ws.rs`: `/ws` upgrade + per-connection read loop). Each connection gets an mpsc channel whose sender is stored on the `Peer` so other tasks can push messages to it.
+- `routes/` builds warp filters (`api.rs`: `/api/rooms/:id`, `/health`; `ws.rs`: `/ws` upgrade + per-connection read loop). Each connection gets an mpsc channel whose sender is stored on the `Peer` so other tasks can push messages to it.
 - `handlers/ws_handler.rs` dispatches `ClientMessage`s and tracks per-connection state in `PeerContext`; `cleanup_peer` runs on disconnect.
 - `services/room.rs` holds room business logic (slug generation with UUID fallback, Argon2 password hashing/verification, capacity check via `room_max_peers`, default 2).
 - `store/` defines the async `RoomStore` trait; `InMemoryRoomStore` is the only impl (rooms are lost on restart). New backends (Redis etc.) should implement this trait.
-- `ice.rs` returns a Google STUN server plus, if `TURN_URL` and `TURN_SECRET` are set, a TURN server with ephemeral HMAC-SHA1 credentials (coturn `--use-auth-secret` scheme). Note it reads env vars directly rather than using `Config`.
+- `ice.rs` builds the ICE server list for one peer: Google STUN plus, if `TURN_URL` and `TURN_SECRET` are set, a TURN server with HMAC-SHA1 credentials (coturn `--use-auth-secret` scheme, username `<expiry>:<peer-id>`, lifetime `TURN_CREDENTIAL_TTL_SECS`). These are **only** delivered over the WebSocket — in `RoomJoined` to the joiner and in `PeerJoined` to the owner — never over HTTP, so TURN access requires being admitted to a room. The credential must outlive the transfer, since coturn re-checks it when allocations refresh.
 - `config.rs` lists every env var and its default (`PORT`, `ROOM_TTL_SECONDS`, `ROOM_MAX_PEERS`, `TURN_*`, `RATE_LIMIT_RPM`, `WS_*`, `ALLOWED_ORIGINS`). Several of these (rate limiting, heartbeat, allowed origins) are defined but not yet enforced; `middleware/rate_limit.rs` is an empty stub and `middleware` is not declared in `main.rs`. CORS currently allows any origin.
 
 ### Frontend layout (`frontend/filecoffee-frontend/src`)
 
 - Routes (`App.tsx`): `/` → `pages/Index.tsx` (sender), `/download/:room_id` → `pages/Download.tsx` (receiver, lazy-loaded).
 - Incoming WebSocket messages are handled with a **Strategy pattern**: `lib/strategies/base.ts` defines `BaseStrategy`/`StrategyManager` keyed by `ServerMessageType`; `upload.ts` and `download.ts` register one strategy class per message type and receive a context object (React setters, refs to `WebSocket`/`RTCPeerConnection`/`RTCDataChannel`, toast, transfer callbacks). New server message handling goes into a new strategy class, not into the page components.
-- Hooks: `useWebSocket`, `useWebRTC` (fetches ICE config from `/api/ice-servers`), `useFileTransfer` (progress/speed/ETA stats), `useRoomValidation`.
+- Hooks: `useWebSocket`, `useWebRTC` (ICE servers are pushed in via `setIceServers` from the `RoomJoined`/`PeerJoined` strategies; falls back to public STUN), `useFileTransfer` (progress/speed/ETA stats), `useRoomValidation`.
 - `config.ts`: `VITE_API_BASE_URL` (default same-origin) and `VITE_WS_BASE_URL` (default `ws://localhost:3030` in dev, same-origin `ws(s)://` in prod).
 - `@/` is aliased to `src/`.
 

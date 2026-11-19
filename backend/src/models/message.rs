@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::ice::IceServer;
 use uuid::Uuid;
 
 /// Messages sent FROM client TO server
@@ -28,10 +29,18 @@ pub enum ClientMessage {
 #[serde(tag = "type")]
 pub enum ServerMessage {
     RoomCreated { room_id: String },
-    RoomJoined,
+    /// Sent to a peer that was admitted to a room. Carries the ICE servers
+    /// (including short-lived TURN credentials) for that peer only.
+    RoomJoined { ice_servers: Vec<IceServer> },
     /// Sent to existing peers when someone joins. The owner uses `peer_id` to
     /// approve (start the transfer) or reject (send `RejectPeer`) the newcomer.
-    PeerJoined { peer_id: Uuid, peer_count: usize },
+    /// `ice_servers` carries fresh ICE/TURN credentials for the recipient, so
+    /// the owner only gets TURN access once someone has actually joined.
+    PeerJoined {
+        peer_id: Uuid,
+        peer_count: usize,
+        ice_servers: Vec<IceServer>,
+    },
     PeerLeft { peer_count: usize },
     Signal { data: serde_json::Value },
     Error { code: String, message: String },

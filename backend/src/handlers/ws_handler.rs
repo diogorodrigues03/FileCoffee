@@ -114,7 +114,12 @@ async fn handle_join_room(
                     .await;
             }
 
-            send_message(peer_tx, ServerMessage::RoomJoined);
+            send_message(
+                peer_tx,
+                ServerMessage::RoomJoined {
+                    ice_servers: signaling_service.ice_servers_for(peer_id),
+                },
+            );
         }
         Err(e) => {
             let code = match &e {

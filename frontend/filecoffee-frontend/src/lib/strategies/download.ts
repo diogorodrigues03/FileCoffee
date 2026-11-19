@@ -5,7 +5,7 @@ import {
     SignalLabelType,
     ClientMessageType,
 } from "@/constants/enums";
-import { fetchIceServers, IceServer, calculateSHA256 } from "@/lib/utils";
+import { calculateSHA256, IceServer } from "@/lib/utils";
 import { BaseStrategy, StrategyManager } from "./base";
 
 export interface DownloadHandlerContext {
@@ -19,6 +19,7 @@ export interface DownloadHandlerContext {
     wsRef: React.MutableRefObject<WebSocket | null>;
     peerConnectionRef: React.MutableRefObject<RTCPeerConnection | null>;
     createConnection: () => Promise<RTCPeerConnection>;
+    setIceServers: (servers: IceServer[] | undefined) => void;
     candidateQueueRef: React.MutableRefObject<RTCIceCandidate[]>;
     receivedChunksRef: React.MutableRefObject<ArrayBuffer[]>;
     receivedBytesRef: React.MutableRefObject<number>;
@@ -37,6 +38,8 @@ export interface DownloadHandlerContext {
 class RoomJoinedStrategy extends BaseStrategy<DownloadHandlerContext> {
     handle(message: ServerMessage, context: DownloadHandlerContext) {
         if (message.type !== ServerMessageType.RoomJoined) return;
+
+        context.setIceServers(message.ice_servers);
 
         context.toast.dismiss(context.toastId);
         context.toast.info("Connected. Waiting for the sender to accept...", {

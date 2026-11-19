@@ -22,7 +22,7 @@ const Index = () => {
   const [shareUrls, setShareUrls] = useState<{ long: string } | null>(null);
   
   const { wsRef, isConnected: isWsConnected, connect: connectWs, disconnect: disconnectWs } = useWebSocket();
-  const { peerConnectionRef, dataChannelRef, createConnection, cleanup: cleanupWebRTC } = useWebRTC();
+  const { peerConnectionRef, dataChannelRef, createConnection, setIceServers, cleanup: cleanupWebRTC } = useWebRTC();
   const [isPeerConnected, setIsPeerConnected] = useState(false);
   
   const { stats, initTransfer, updateTransfer, cancelTransfer: cancelTransferLogic } = useFileTransfer();
@@ -72,6 +72,7 @@ const Index = () => {
             peerConnectionRef,
             dataChannelRef,
             createConnection,
+            setIceServers,
             selectedFile,
             toastId,
             initTransfer,

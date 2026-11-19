@@ -34,7 +34,7 @@ const Download = () => {
 
   // Hooks
   const { wsRef, connect: connectWs, disconnect: disconnectWs } = useWebSocket();
-  const { peerConnectionRef, createConnection, candidateQueueRef, cleanup: cleanupWebRTC } = useWebRTC();
+  const { peerConnectionRef, createConnection, setIceServers, candidateQueueRef, cleanup: cleanupWebRTC } = useWebRTC();
   const { stats, initTransfer, updateTransfer, cancelTransfer: cancelTransferLogic } = useFileTransfer();
 
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -102,6 +102,7 @@ const Download = () => {
             wsRef,
             peerConnectionRef,
             createConnection,
+            setIceServers,
             candidateQueueRef,
             receivedChunksRef,
             receivedBytesRef,

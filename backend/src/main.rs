@@ -32,7 +32,7 @@ async fn main() {
     // Initialize services
     let store = Arc::new(InMemoryRoomStore::new());
     let room_service = Arc::new(RoomService::new(store.clone(), config.clone()));
-    let signaling_service = Arc::new(SignalingService::new());
+    let signaling_service = Arc::new(SignalingService::new(config.clone()));
 
     // Spawn room cleanup task
     let cleanup_room_service = room_service.clone();

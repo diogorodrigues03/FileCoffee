@@ -1,3 +1,5 @@
+import type { IceServer } from "@/lib/utils";
+
 export const DATA_CHANNEL_LABEL = "fileTransfer";
 
 export enum ViewType {
@@ -33,8 +35,13 @@ export enum ServerMessageType {
 
 export type ServerMessage =
   | { type: ServerMessageType.RoomCreated; room_id: string }
-  | { type: ServerMessageType.RoomJoined }
-  | { type: ServerMessageType.PeerJoined; peer_id: string; peer_count: number }
+  | { type: ServerMessageType.RoomJoined; ice_servers: IceServer[] }
+  | {
+    type: ServerMessageType.PeerJoined;
+    peer_id: string;
+    peer_count: number;
+    ice_servers: IceServer[];
+  }
   | { type: ServerMessageType.PeerLeft }
   | { type: ServerMessageType.Signal; data: JSON }
   | { type: ServerMessageType.Error; code: string; message: string }

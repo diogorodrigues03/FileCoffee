@@ -6,7 +6,7 @@ import {
     SignalLabelType,
     ClientMessageType,
 } from "@/constants/enums";
-import { calculateSHA256 } from "@/lib/utils";
+import { calculateSHA256, IceServer } from "@/lib/utils";
 import { BaseStrategy, StrategyManager } from "./base";
 
 export interface UploadHandlerContext {
@@ -19,6 +19,7 @@ export interface UploadHandlerContext {
     peerConnectionRef: React.MutableRefObject<RTCPeerConnection | null>;
     dataChannelRef: React.MutableRefObject<RTCDataChannel | null>;
     createConnection: () => Promise<RTCPeerConnection>;
+    setIceServers: (servers: IceServer[] | undefined) => void;
     selectedFile: File | null;
     toastId: string | number;
     initTransfer: (size: number) => void;
@@ -71,6 +72,8 @@ class PeerJoinedStrategy extends BaseStrategy<UploadHandlerContext> {
     handle(message: ServerMessage, context: UploadHandlerContext) {
         if (message.type !== ServerMessageType.PeerJoined) return;
         const { peer_id } = message;
+        // Fresh TURN credentials for this connection attempt.
+        context.setIceServers(message.ice_servers);
 
         // Nothing is sent until the sender explicitly approves the receiver.
         context.toast("Someone opened your link", {
