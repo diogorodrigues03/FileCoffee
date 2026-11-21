@@ -5,7 +5,8 @@ import {
     SignalLabelType,
     ClientMessageType,
 } from "@/constants/enums";
-import { fetchIceServers, IceServer, calculateSHA256 } from "@/lib/utils";
+import { IceServer } from "@/lib/utils";
+import { FileReceiver, IncomingFile } from "@/lib/transfer/receiver";
 import { BaseStrategy, StrategyManager } from "./base";
 
 export interface DownloadHandlerContext {
@@ -19,24 +20,21 @@ export interface DownloadHandlerContext {
     wsRef: React.MutableRefObject<WebSocket | null>;
     peerConnectionRef: React.MutableRefObject<RTCPeerConnection | null>;
     createConnection: () => Promise<RTCPeerConnection>;
+    setIceServers: (servers: IceServer[] | undefined) => void;
     candidateQueueRef: React.MutableRefObject<RTCIceCandidate[]>;
-    receivedChunksRef: React.MutableRefObject<ArrayBuffer[]>;
-    receivedBytesRef: React.MutableRefObject<number>;
-    fileMetadataRef: React.MutableRefObject<{
-        name: string;
-        size: number;
-        type: string;
-        sha256: string;
-    } | null>;
+    receiverRef: React.MutableRefObject<FileReceiver | null>;
+    setIncomingFile: (file: IncomingFile | null) => void;
+    setSavedToDisk: (saved: boolean) => void;
     initTransfer: (size: number) => void;
     updateTransfer: (bytes: number) => void;
     cancelTransfer: () => void;
-    isCanceledRef: React.MutableRefObject<boolean>;
 }
 
 class RoomJoinedStrategy extends BaseStrategy<DownloadHandlerContext> {
     handle(message: ServerMessage, context: DownloadHandlerContext) {
         if (message.type !== ServerMessageType.RoomJoined) return;
+
+        context.setIceServers(message.ice_servers);
 
         context.toast.dismiss(context.toastId);
         context.toast.info("Connected. Waiting for the sender to accept...", {
@@ -50,6 +48,8 @@ class RoomJoinedStrategy extends BaseStrategy<DownloadHandlerContext> {
 class PeerLeftStrategy extends BaseStrategy<DownloadHandlerContext> {
     handle(message: ServerMessage, context: DownloadHandlerContext) {
         context.toast.info("Peer disconnected.");
+        context.receiverRef.current?.cancel();
+        context.receiverRef.current = null;
         context.cancelTransfer();
         if (context.peerConnectionRef.current) {
             context.peerConnectionRef.current.close();
@@ -67,7 +67,6 @@ class SignalStrategy extends BaseStrategy<DownloadHandlerContext> {
 
         if (signal.type === SignalLabelType.Offer) {
             context.toast.dismiss("awaiting-approval");
-            context.isCanceledRef.current = false;
             await this.handleOffer(signal, context);
         } else if (signal.type === SignalLabelType.Candidate) {
             await this.handleCandidate(signal, context);
@@ -91,7 +90,7 @@ class SignalStrategy extends BaseStrategy<DownloadHandlerContext> {
                 context.toast.success("Connected to peer! Waiting for data...");
             };
 
-            dc.onmessage = (e) => this.handleDataChannelMessage(e, context, dc);
+            this.startReceiver(dc, context);
         };
 
         peerConnection.onicecandidate = (event) => {
@@ -145,87 +144,49 @@ class SignalStrategy extends BaseStrategy<DownloadHandlerContext> {
         }
     }
 
-    private async handleDataChannelMessage(
-        e: MessageEvent,
-        context: DownloadHandlerContext,
-        dc: RTCDataChannel
-    ) {
-        const data = e.data;
-        if (context.isCanceledRef.current) return;
+    private startReceiver(dc: RTCDataChannel, context: DownloadHandlerContext) {
+        context.receiverRef.current?.cancel();
+        context.setIncomingFile(null);
+        context.setDownloadUrl(null);
+        context.setSavedToDisk(false);
 
-        // 1. Handle Metadata (String)
-        if (typeof data === "string") {
-            try {
-                const metadata = JSON.parse(data);
-                if (metadata.type === SignalLabelType.Cancel) {
-                    context.toast.error("Peer cancelled the transfer.");
-                    context.isCanceledRef.current = true;
-                    context.cancelTransfer();
-                    return;
+        context.receiverRef.current = new FileReceiver(dc, {
+            onOffer: (file) => {
+                context.setFileName(file.name);
+                context.setIncomingFile(file);
+            },
+            onStart: (file, kind) => {
+                context.setIncomingFile(null);
+                context.initTransfer(file.size);
+                if (kind === "memory" && file.size > 1024 * 1024 * 1024) {
+                    context.toast.warning(
+                        "This browser can't write to disk while receiving, so a file this large may run out of memory."
+                    );
                 }
-
-                if (metadata.type === "metadata") {
-                    context.fileMetadataRef.current = {
-                        name: metadata.fileName,
-                        size: metadata.fileSize,
-                        type: metadata.fileType,
-                        sha256: metadata.sha256,
-                    };
-                    context.receivedChunksRef.current = [];
-                    context.receivedBytesRef.current = 0;
-                    context.setDownloadUrl(null);
-                    context.setFileName(metadata.fileName);
-
-                    context.initTransfer(metadata.fileSize);
-                    context.toast.info(`Receiving ${metadata.fileName}...`);
+                context.toast.info(`Receiving ${file.name}...`);
+            },
+            onProgress: (bytes) => context.updateTransfer(bytes),
+            onComplete: (file, url) => {
+                context.setFileName(file.name);
+                if (url) {
+                    context.setDownloadUrl(url);
+                } else {
+                    context.setSavedToDisk(true);
                 }
-            } catch (err) {
-                console.error("Error parsing metadata:", err);
-            }
-        }
-        // 2. Handle Binary Chunk
-        else if (data instanceof ArrayBuffer) {
-            context.receivedChunksRef.current.push(data);
-            context.receivedBytesRef.current += data.byteLength;
-
-            context.updateTransfer(data.byteLength);
-
-            // Check if finished
-            if (
-                context.fileMetadataRef.current &&
-                context.receivedBytesRef.current >= context.fileMetadataRef.current.size
-            ) {
-                console.log("File transfer complete. Reassembling...");
-                context.toast.info("Reassembling and verifying file...");
-
-                const blob = new Blob(context.receivedChunksRef.current, {
-                    type: context.fileMetadataRef.current.type,
-                });
-
-                const expectedHash = context.fileMetadataRef.current.sha256;
-                if (expectedHash) {
-                    const actualHash = await calculateSHA256(blob);
-                    if (expectedHash !== actualHash) {
-                        context.toast.error("File integrity check failed. The file may be corrupted.");
-                        context.setError("File integrity check failed (SHA-256 mismatch).");
-                        return;
-                    }
-                }
-
-                const url = URL.createObjectURL(blob);
-                context.setDownloadUrl(url);
-                context.setFileName(context.fileMetadataRef.current.name);
                 context.toast.success("File transfer complete and verified!");
-
-                // Notify sender we got it completely
-                dc.send(
-                    JSON.stringify({
-                        type: SignalLabelType.Progress,
-                        percent: 100,
-                    })
-                );
-            }
-        }
+            },
+            onError: (message) => {
+                context.setIncomingFile(null);
+                context.cancelTransfer();
+                context.toast.error(message);
+                context.setError(message);
+            },
+            onCanceledByPeer: () => {
+                context.setIncomingFile(null);
+                context.cancelTransfer();
+                context.toast.error("Peer cancelled the transfer.");
+            },
+        });
     }
 }
 

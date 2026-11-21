@@ -9,11 +9,20 @@ pub enum AppError {
     #[error("Invalid password")]
     InvalidPassword,
 
+    #[error("Too many wrong password attempts; the room has been closed")]
+    TooManyPasswordAttempts,
+
+    #[error("Password must be at most {0} characters")]
+    PasswordTooLong(usize),
+
     #[error("Room capacity exceeded")]
     RoomCapacityExceeded,
 
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
+
+    #[error("The server is at capacity; please try again later")]
+    TooManyRooms,
 
     #[error("Not in a room")]
     NotInRoom,
@@ -38,8 +47,11 @@ impl AppError {
         match self {
             AppError::RoomNotFound(_) => StatusCode::NOT_FOUND,
             AppError::InvalidPassword => StatusCode::UNAUTHORIZED,
+            AppError::TooManyPasswordAttempts => StatusCode::GONE,
+            AppError::PasswordTooLong(_) => StatusCode::BAD_REQUEST,
             AppError::RoomCapacityExceeded => StatusCode::CONFLICT,
             AppError::RateLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
+            AppError::TooManyRooms => StatusCode::SERVICE_UNAVAILABLE,
             AppError::NotInRoom => StatusCode::BAD_REQUEST,
             AppError::Forbidden => StatusCode::FORBIDDEN,
             AppError::PeerNotFound => StatusCode::NOT_FOUND,

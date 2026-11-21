@@ -1,6 +1,5 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { API_BASE_URL } from "../config";
 import { TransferStats } from "@/types/transfer";
 
 export function cn(...inputs: ClassValue[]) {
@@ -11,25 +10,6 @@ export interface IceServer {
     urls: string;
     username?: string;
     credential?: string;
-}
-
-export interface IceConfig {
-    iceServers: IceServer[];
-}
-
-export async function fetchIceServers(): Promise<IceServer[]> {
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/ice-servers`);
-        if (!response.ok) {
-            throw new Error("Failed to fetch ICE servers");
-        }
-        const config: IceConfig = await response.json();
-        return config.iceServers;
-    } catch (error) {
-        console.error("Error fetching ICE servers:", error);
-        // Fallback to Google STUN if fetch fails
-        return [{ urls: "stun:stun.l.google.com:19302" }];
-    }
 }
 
 export function getFileSize(file: { size: number }): string {
@@ -49,16 +29,6 @@ export function getFileSize(file: { size: number }): string {
     } else {
         return bytes + " B";
     }
-}
-
-export async function calculateSHA256(data: File | Blob): Promise<string> {
-    const buffer = await data.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hashHex = hashArray
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-    return hashHex;
 }
 
 export function updateStats(stats: TransferStats, newBytes: number, totalSize: number): TransferStats {

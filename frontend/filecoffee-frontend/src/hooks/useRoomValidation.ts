@@ -34,6 +34,9 @@ export const useRoomValidation = (
 
         if (response.ok) {
           setRoomExists(true);
+        } else if (response.status === 429) {
+          setRoomExists(false);
+          setError("Too many requests. Please wait a minute and refresh the page.");
         } else {
           setRoomExists(false);
           setError("Room not found or has expired.");

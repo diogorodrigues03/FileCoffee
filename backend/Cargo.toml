@@ -20,3 +20,12 @@ thiserror = "2.0.18"
 tracing-subscriber = { version = "0.3.22", features = ["json", "env-filter"] }
 tracing = "0.1.44"
 argon2 = "0.5.3"
+# Already pulled in by warp; used directly to run warp behind our own accept
+# loop so each request knows its client address (warp 0.4 dropped warp::addr).
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "http1", "tokio"] }
+tower-service = "0.3"
+http = "1"
+
+[dev-dependencies]
+warp = { version = "0.4.2", features = ["websocket", "server", "test"] }

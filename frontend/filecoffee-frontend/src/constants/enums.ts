@@ -1,4 +1,22 @@
+import type { IceServer } from "@/lib/utils";
+
 export const DATA_CHANNEL_LABEL = "fileTransfer";
+
+// Must not exceed the backend's PASSWORD_MAX_LEN (default 256).
+export const PASSWORD_MAX_LENGTH = 256;
+
+// Error codes sent by the backend (backend/src/models/message.rs `error_codes`)
+export const ErrorCode = {
+  RoomNotFound: "ROOM_NOT_FOUND",
+  InvalidPassword: "INVALID_PASSWORD",
+  RoomFull: "ROOM_FULL",
+  Rejected: "REJECTED",
+  TooManyAttempts: "TOO_MANY_ATTEMPTS",
+  PasswordTooLong: "PASSWORD_TOO_LONG",
+  RateLimited: "RATE_LIMITED",
+  ServerBusy: "SERVER_BUSY",
+  RoomExpired: "ROOM_EXPIRED",
+} as const;
 
 export enum ViewType {
   UPLOAD,
@@ -33,8 +51,13 @@ export enum ServerMessageType {
 
 export type ServerMessage =
   | { type: ServerMessageType.RoomCreated; room_id: string }
-  | { type: ServerMessageType.RoomJoined }
-  | { type: ServerMessageType.PeerJoined; peer_id: string; peer_count: number }
+  | { type: ServerMessageType.RoomJoined; ice_servers: IceServer[] }
+  | {
+    type: ServerMessageType.PeerJoined;
+    peer_id: string;
+    peer_count: number;
+    ice_servers: IceServer[];
+  }
   | { type: ServerMessageType.PeerLeft }
   | { type: ServerMessageType.Signal; data: JSON }
   | { type: ServerMessageType.Error; code: string; message: string }
@@ -50,4 +73,19 @@ export enum SignalLabelType {
   Candidate = "candidate",
   Progress = "progress",
   Cancel = "cancel",
+}
+
+/**
+ * JSON control messages on the WebRTC data channel (browser to browser, the
+ * server never sees these). Binary messages on the channel are file chunks.
+ *
+ * sender → receiver: Metadata, then chunks, then Done (carries the SHA-256).
+ * receiver → sender: Ready (start streaming), Ack (bytes written to disk),
+ * Progress at 100% once verified. Either side may send Cancel.
+ */
+export enum TransferMessageType {
+  Metadata = "metadata",
+  Ready = "ready",
+  Ack = "ack",
+  Done = "done",
 }
